@@ -3,6 +3,7 @@ import LandingPage from "./features/landing/LandingPage";
 import RegisterPage from "./features/auth/Register";
 import LoginPage from "./features/auth/Login";
 import Dashboard from "./features/auth/Dashboard";
+import WorkSpacePage from "./features/workspace/pages/WorkSpacePage";
 const AppRouter = () => {
   return (
       <BrowserRouter>
@@ -11,6 +12,7 @@ const AppRouter = () => {
               <Route path="/register" element={<RegisterPage />} />
               <Route path="/login" element={<LoginPage />} />
               <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/workspace" element={<WorkSpacePage/>} />
           </Routes>
       </BrowserRouter>
   )
