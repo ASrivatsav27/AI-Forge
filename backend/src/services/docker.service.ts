@@ -29,4 +29,9 @@ export async function createContainer(projectId: string, workspacePath: string) 
 
   return container;
 }
+export async function deleteContainer(projectId: string) {
+  const container = docker.getContainer(`project-${projectId}`);
 
+  await container.stop();
+  await container.remove();
+}
