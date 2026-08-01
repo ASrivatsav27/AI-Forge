@@ -4,7 +4,8 @@ import {prisma} from "../config/db.js"
 import fs from "fs/promises";
 import path from "path";
 import { v4 as uuidv4 } from 'uuid';
-
+import { generateFileTree } from "../utils/fileTree.js";
+import docker from "../config/docker.js";
 
 
 export async function createProjectController(req: Request, res: Response) {
@@ -94,3 +95,48 @@ export async function deleteProjectController(req: Request<ProjectParams>, res: 
         message:"Project Deleted successfully",project
     })
 }
+
+export async function getProjectDetails(req: Request<ProjectParams>, res: Response) {
+    const { projectId } = req.params
+    
+    const project = await prisma.project.findUnique({
+        where: {
+            id:projectId
+      },
+        select: {
+        id: true,
+        name: true,
+        createdAt: true,
+        updatedAt: true,
+          workspacePath: true,
+        containerId:true
+      },
+      
+    })
+  
+  if (!project) {
+    return res.status(404).json({
+       message:"No project found"
+     })
+   }
+    const fileTree = await generateFileTree(project.workspacePath);
+    const container = docker.getContainer(project.containerId!);
+       
+    const info = await container.inspect();
+
+  const ports = info.NetworkSettings.Ports
+  
+    return res.status(200).json({
+      message: "Fetched project details",
+      project,
+      fileTree,
+      ports
+    })
+
+
+
+}   
+  
+
+
+
