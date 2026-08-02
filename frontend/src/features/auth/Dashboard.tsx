@@ -3,10 +3,27 @@ import { useNavigate } from "react-router-dom";
 import { authClient } from "@/lib/auth-client";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, } from "@/components/ui/card";
+import { useProject } from "@/hooks/useProject";
+import { Dialog,DialogTrigger,DialogContent,DialogHeader,DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { useState,useEffect} from "react";
+
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { handleCreateProject,handleGetAllProjects,projects } = useProject()
+  const [name, setName] = useState("");
+  
+  useEffect(() => {
+    const fetchProjects = async () => {
+    await handleGetAllProjects();
+   };
+
+  fetchProjects();
+   }, []);
+  
+
 
   const { data: session, isPending } = authClient.useSession();
 
@@ -14,6 +31,11 @@ export default function Dashboard() {
     await authClient.signOut();
 
     navigate("/login");
+  }
+ 
+  async function handleSubmit(e:React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    await handleCreateProject({name})
   }
 
   if (isPending) {
@@ -24,43 +46,54 @@ export default function Dashboard() {
     );
   }
 
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-black px-4">
-      <Card className="w-full max-w-lg border-zinc-800 bg-zinc-950 text-white">
-        <CardHeader>
-          <h1 className="text-3xl font-bold">Dashboard</h1>
-          <p className="text-zinc-400">
-            Better Auth is working successfully 🎉
-          </p>
-        </CardHeader>
+return (
+  <div className="min-h-screen bg-black text-white">
+    {/* Top Navbar */}
+    <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
+      <Dialog>
+        <DialogTrigger asChild>
+          <Button>Create Project</Button>
+        </DialogTrigger>
 
-        <CardContent className="space-y-6">
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-            <p>
-              <span className="font-semibold">Name:</span>{" "}
-              {session?.user?.name}
-            </p>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create Project</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSubmit}>
+          <Input placeholder="Project name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
 
-            <p>
-              <span className="font-semibold">Email:</span>{" "}
-              {session?.user?.email}
-            </p>
+          <Button  type="submit">Create</Button>
+          </form>
+        </DialogContent>
+      </Dialog>
 
-            <p>
-              <span className="font-semibold">User ID:</span>{" "}
-              {session?.user?.id}
-            </p>
-          </div>
-
-          <Button
-            variant="destructive"
-            className="w-full"
-            onClick={handleLogout}
-          >
-            Logout
-          </Button>
-        </CardContent>
-      </Card>
+      <Button variant="destructive" onClick={handleLogout}>
+        Logout
+      </Button>
     </div>
-  );
+
+    {/* Dashboard Content */}
+    <div className="p-6">
+      <h1 className="mb-6 text-3xl font-bold">Your Projects</h1>
+          <div className="grid gap-4">
+  {projects.map((project) => (
+    <Card key={project.id}>
+      <CardHeader>
+        <h2>{project.name}</h2>
+      </CardHeader>
+
+      <CardContent>
+        <Button onClick={() => navigate(`/workspace/${project.id}`)}>
+          Open
+        </Button>
+      </CardContent>
+    </Card>
+  ))}
+</div>
+    </div>
+  </div>
+);
 }

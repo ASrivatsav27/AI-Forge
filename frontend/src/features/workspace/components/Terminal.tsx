@@ -5,7 +5,13 @@ import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef } from "react";
 import socket from "@/sockets/socket";
 
-const Terminal = () => {
+
+type TerminalProps = {
+  projectId:string
+}
+
+
+const Terminal = ({projectId}:TerminalProps) => {
   const terminalRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -21,12 +27,15 @@ const Terminal = () => {
         background: "#1e1e1e",
       },
     });
-
+    
     const fitAddon = new FitAddon();
 
     termRef.current = term;
-    fitAddonRef.current = fitAddon;
 
+    socket.emit("terminal:connect",{projectId})
+
+    fitAddonRef.current = fitAddon;
+     
     term.loadAddon(fitAddon);
 
     term.open(terminalRef.current);
@@ -34,7 +43,7 @@ const Terminal = () => {
     fitAddon.fit();
 
     term.focus();
-
+   
     term.onData((data) => {
       socket.emit("terminal:write", data);
     });

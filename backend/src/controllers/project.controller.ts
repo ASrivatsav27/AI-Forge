@@ -5,7 +5,7 @@ import fs from "fs/promises";
 import path from "path";
 import { v4 as uuidv4 } from 'uuid';
 import { generateFileTree } from "../utils/fileTree.js";
-import docker from "../config/docker.js";
+
 
 
 export async function createProjectController(req: Request, res: Response) {
@@ -40,7 +40,7 @@ export async function createProjectController(req: Request, res: Response) {
 
     })
     
-    return res.status(200).json({
+    return res.status(201).json({
         message:"Project created successfully",project
     });
 
@@ -73,22 +73,33 @@ export async function deleteProjectController(req: Request<ProjectParams>, res: 
      } catch (err) {
      console.warn("Failed to delete container:", err);
     }
-    const workspacePath = path.resolve(process.env.WORKSPACE_PATH!, projectId);
+  const workspacePath = path.resolve(process.env.WORKSPACE_PATH!, projectId);
     
     const userId = req.user.id
-
-    await fs.rm(workspacePath, { recursive: true, force: true });
-
-    const project =  await prisma.project.delete({
-       where: {
-             id: projectId!,
-            userId:userId
-     },
-   });
+    const project = await prisma.project.findFirst({
+    where: {
+        id: projectId,
+        userId,
+    },
+    });
+    
     
     if (!project) {
-    return res.status(404).json({ message: "Project not found",});
-   }
+    return res.status(404).json({
+        message: "Project not found",
+    });
+     }
+    
+    await prisma.project.delete({
+    where: {
+        id: projectId,
+    },
+    });
+  
+    await fs.rm(workspacePath, { recursive: true, force: true });
+
+  
+ 
     
     
     return res.status(200).json({
@@ -98,10 +109,11 @@ export async function deleteProjectController(req: Request<ProjectParams>, res: 
 
 export async function getProjectDetails(req: Request<ProjectParams>, res: Response) {
     const { projectId } = req.params
-    
-    const project = await prisma.project.findUnique({
+    const userId = req.user.id;
+    const project = await prisma.project.findFirst({
         where: {
-            id:projectId
+        id: projectId,
+        userId
       },
         select: {
         id: true,
@@ -120,17 +132,12 @@ export async function getProjectDetails(req: Request<ProjectParams>, res: Respon
      })
    }
     const fileTree = await generateFileTree(project.workspacePath);
-    const container = docker.getContainer(project.containerId!);
-       
-    const info = await container.inspect();
 
-  const ports = info.NetworkSettings.Ports
   
     return res.status(200).json({
       message: "Fetched project details",
       project,
       fileTree,
-      ports
     })
 
 
