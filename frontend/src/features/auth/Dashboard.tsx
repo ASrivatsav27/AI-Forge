@@ -12,7 +12,7 @@ import { useState,useEffect} from "react";
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { handleCreateProject,handleGetAllProjects,projects } = useProject()
+  const { handleCreateProject,handleGetAllProjects,projects,handleDeleteProject } = useProject()
   const [name, setName] = useState("");
   
   useEffect(() => {
@@ -88,6 +88,15 @@ return (
       <CardContent>
         <Button onClick={() => navigate(`/workspace/${project.id}`)}>
           Open
+        </Button>
+        <Button
+          variant="destructive"
+          onClick={async () => {
+          await handleDeleteProject({
+            id:project.id
+          })
+        }}>
+          Delete
         </Button>
       </CardContent>
     </Card>

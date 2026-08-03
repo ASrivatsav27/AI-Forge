@@ -2,19 +2,21 @@ import { Terminal as XTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef,useState } from "react";
 import socket from "@/sockets/socket";
 
 
 type TerminalProps = {
-  projectId:string
+  projectId: string
+  setPreviewPort: React.Dispatch<React.SetStateAction<string | null>>
 }
 
 
-const Terminal = ({projectId}:TerminalProps) => {
+const Terminal = ({projectId,setPreviewPort}:TerminalProps) => {
   const terminalRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+ 
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -56,16 +58,32 @@ const Terminal = ({projectId}:TerminalProps) => {
 
     const handleResize = () => {
       fitAddon.fit();
+      
+    socket.emit("terminal:resize", {
+       cols: term.cols,
+       rows: term.rows,
+     });
     };
-
+  
     window.addEventListener("resize", handleResize);
+    
+    const handlePreviewReady = (port: string) => {
+        console.log("Preview Ready:", port);
+       setPreviewPort(port);
+      };
+
+  socket.on("preview:ready", handlePreviewReady);
+
+ 
 
     return () => {
+      socket.emit("terminal:disconnect", { projectId });
       window.removeEventListener("resize", handleResize);
       socket.off("terminal:data", handleTerminalData);
+      socket.off("preview:ready", handlePreviewReady);
       term.dispose();
     };
-  }, []);
+  }, [projectId,setPreviewPort]);
 
   return (
     <div
