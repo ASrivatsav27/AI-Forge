@@ -8,11 +8,15 @@ import { prisma } from "./src/config/db.js";
 import chokidar from "chokidar";
 import { generateFileTree } from "./src/utils/fileTree.js";
 import type { ProjectSession } from "./src/types/session.js";
+import type { ClientToServerEvents,ServerToClientEvents } from "./src/types/file.js";
 import { waitForPreview } from "./src/services/previewProbe.js";
+import fs from "fs/promises";
+import path from "path";
+import { ensureContainerRunning } from "./src/services/docker.service.js";
 
 const server = createServer(app);
 
-const io = new Server(server, {
+const io = new Server<ClientToServerEvents,ServerToClientEvents>(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"],
@@ -36,9 +40,9 @@ io.on("connection", (socket: Socket) => {
     });
 
     if (!project) return;
-
+   const container = await ensureContainerRunning(project.containerId!);
     socket.join(projectId);
-
+   
     let session = sessions.get(projectId);
 
     if (!session) {
@@ -60,9 +64,11 @@ io.on("connection", (socket: Socket) => {
       });
 
       session = {
+        projectId,
         pty: ptyProcess,
         watcher,
         clients: new Set(),
+        workspacePath:project.workspacePath,
         preview: {
           state: "IDLE",
           hostPort: undefined,
@@ -73,6 +79,9 @@ io.on("connection", (socket: Socket) => {
 
       let terminalBuffer = "";
 
+     
+
+      
       ptyProcess.onData(async (data) => {
         io.to(projectId).emit("terminal:data", data);
         terminalBuffer += data;
@@ -179,7 +188,47 @@ io.on("connection", (socket: Socket) => {
       console.warn("PTY already exited, ignoring resize");
     }
   });
+   
+  socket.on("file:create", async ({relativePath,content =""}) => {
+  
+    const session = socket.data.session;
+    if (!session) return
+    const filePath = path.join(session.workspacePath, relativePath)
+    
+    await fs.mkdir(path.dirname(filePath),{recursive:true})
+    await fs.writeFile(filePath, content);
 
+  })
+  
+  socket.on("fs:delete", async ({ relativePath }) => {
+  const session = socket.data.session;
+  if (!session) return;
+
+  const targetPath = path.join(session.workspacePath, relativePath);
+
+  const stats = await fs.stat(targetPath);
+
+  if (stats.isDirectory()) {
+    await fs.rm(targetPath, {
+      recursive: true,
+      force: true,
+    });
+  } else {
+    await fs.unlink(targetPath);
+  }
+});
+
+  socket.on("file:save", async ({ relativePath, content }) => {
+    const session = socket.data.session
+    if (!session) return
+    const filePath = path.join(session.workspacePath, relativePath)
+     if ( !filePath.startsWith(path.resolve(session.workspacePath))) {
+        return;
+    }
+    await fs.writeFile(filePath, content);
+  })
+
+  
   socket.on("terminal:disconnect", ({ projectId }) => {
     const session = socket.data.session;
 

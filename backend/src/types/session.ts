@@ -6,8 +6,9 @@ export type ProjectSession = {
   watcher: FSWatcher;
   clients: Set<string>;
 
-   preview: {
-  state: "IDLE" | "STARTING" | "READY" | "STOPPED" | "ERROR";
-  hostPort?: string;
-};
+    preview: {
+      state: "IDLE" | "STARTING" | "READY" | "STOPPED" | "ERROR";
+
+    hostPort?: string | undefined;
+  };
 };
