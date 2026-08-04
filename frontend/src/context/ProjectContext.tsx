@@ -9,6 +9,10 @@ type ProjectContextType = {
     fileTree: FileTree;
     loading: boolean;
 
+     selectedFile: string | null;
+     setSelectedFile: React.Dispatch<React.SetStateAction<string | null>>;
+     setFileTree: React.Dispatch<React.SetStateAction<FileTree>>
+
     handleCreateProject: (payload: createProjectPayload) => Promise<void>;
     handleGetAllProjects: () => Promise<void>;
     handleGetProjectDetails: (payload: ProjectDetailsPayload) => Promise<void>;
@@ -29,6 +33,7 @@ export function ProjectProvider({ children }: ProjectProps) {
     const [project, setProject] = useState<ProjectDetails | null>(null);
     const [loading, setLoading] = useState(false);
     const [fileTree, setFileTree] = useState<FileTree>({});
+    const [selectedFile, setSelectedFile] = useState<string | null>(null);
 
     const handleCreateProject = async(payload:createProjectPayload) => {
         setLoading(true)
@@ -89,7 +94,7 @@ export function ProjectProvider({ children }: ProjectProps) {
     }
 
 
-    return (<ProjectContext.Provider value={{fileTree,project,projects,handleCreateProject,handleGetAllProjects,handleDeleteProject,handleGetProjectDetails,loading}}>
+    return (<ProjectContext.Provider value={{fileTree,project,projects,handleCreateProject,handleGetAllProjects,handleDeleteProject,handleGetProjectDetails,selectedFile,setSelectedFile,loading,setFileTree}}>
             {children}
            </ProjectContext.Provider>
         )

@@ -217,7 +217,26 @@ io.on("connection", (socket: Socket) => {
     await fs.unlink(targetPath);
   }
 });
+  
 
+   socket.on("file:read", async ({ relativePath }) => {
+  const session = socket.data.session;
+  if (!session) return;
+
+  const filePath = path.join(session.workspacePath, relativePath);
+
+  const content = await fs.readFile(filePath, "utf8");
+
+  socket.emit("file:content", {
+    relativePath,
+    content,
+  });
+});
+
+
+
+  
+  
   socket.on("file:save", async ({ relativePath, content }) => {
     const session = socket.data.session
     if (!session) return

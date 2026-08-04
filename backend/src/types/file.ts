@@ -1,3 +1,6 @@
+import type{ FileTree } from "../utils/fileTree.js";
+
+
 export interface ClientToServerEvents {
   "terminal:connect": {
     projectId: string;
@@ -19,6 +22,10 @@ export interface ClientToServerEvents {
     relativePath: string;
     content: string;
   };
+   
+    "file:read": {
+        relativePath: string;
+    }
 
   "fs:delete": {
     relativePath: string;
@@ -37,4 +44,17 @@ export interface ClientToServerEvents {
     sourcePath: string;
     destinationPath: string;
   };
+}
+
+export interface ServerToClientEvents {
+  "terminal:data": (data: string) => void;
+
+  "preview:ready": (port: string) => void;
+
+  "preview:stopped": () => void;
+
+  "file:content": (data: {
+    relativePath: string;
+    content: string;
+     }) => void;
 }
