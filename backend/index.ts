@@ -14,6 +14,7 @@ import fs from "fs/promises";
 import path from "path";
 import { ensureContainerRunning } from "./src/services/docker.service.js";
 
+
 const server = createServer(app);
 
 const io = new Server<ClientToServerEvents,ServerToClientEvents>(server, {
@@ -68,7 +69,8 @@ io.on("connection", (socket: Socket) => {
         pty: ptyProcess,
         watcher,
         clients: new Set(),
-        workspacePath:project.workspacePath,
+        workspacePath: project.workspacePath,
+        containerId:project.containerId!,
         preview: {
           state: "IDLE",
           hostPort: undefined,
@@ -189,18 +191,24 @@ io.on("connection", (socket: Socket) => {
       console.warn("PTY already exited, ignoring resize");
     }
   });
-   
-  socket.on("file:create", async ({relativePath,content =""}) => {
-  
-    const session = socket.data.session;
-    if (!session) return
-    const filePath = path.join(session.workspacePath, relativePath)
-    
-    await fs.mkdir(path.dirname(filePath),{recursive:true})
-    await fs.writeFile(filePath, content);
+  socket.on("file:create", async ({ relativePath, content = "" }) => {
+  const session = socket.data.session;
+  if (!session) return;
 
-  })
-  
+  const filePath = path.join(session.workspacePath, relativePath);
+
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, content);
+});
+
+socket.on("folder:create", async ({ relativePath }) => {
+  const session = socket.data.session;
+  if (!session) return;
+
+  const folderPath = path.join(session.workspacePath, relativePath);
+
+  await fs.mkdir(folderPath, { recursive: true });
+});
   socket.on("fs:delete", async ({ relativePath }) => {
   const session = socket.data.session;
   if (!session) return;
@@ -249,7 +257,7 @@ io.on("connection", (socket: Socket) => {
   })
 
   
-  socket.on("terminal:disconnect", ({ projectId }) => {
+  socket.on("terminal:disconnect", async ({ projectId }) => {
     const session = socket.data.session;
 
     if (!session) return;
@@ -259,6 +267,8 @@ io.on("connection", (socket: Socket) => {
     if (session.clients.size === 0) {
       session.watcher.close();
       session.pty.kill();
+          const container = docker.getContainer(session.containerId);
+    await container.stop();
       sessions.delete(projectId);
     }
 

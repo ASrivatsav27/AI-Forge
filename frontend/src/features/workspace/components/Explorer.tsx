@@ -1,9 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   ChevronDown,
   ChevronRight,
   Ellipsis,
-  File,
   FilePlus2,
   Folder,
   FolderOpen,
@@ -14,24 +13,27 @@ import {
 import socket from "@/sockets/socket";
 import { useProject } from "@/hooks/useProject";
 import TreeNode from "./TreeNode";
+import InlineInput from "./InLineInput";
 import type { FileTree } from "@/types/project.types";
+import type { CreatingState } from "@/types/explorer.types";
 
 const Explorer = () => {
-  const {
-    project,
-    fileTree,
-    setFileTree,
-  } = useProject();
+  const { project, fileTree, setFileTree, setSelectedFile } = useProject();
 
   const [rootOpen, setRootOpen] = useState(true);
+  const [creating, setCreating] = useState<CreatingState>(null);
 
-  const [creatingFile, setCreatingFile] = useState(false);
-  const [creatingFolder, setCreatingFolder] = useState(false);
-  const [newName, setNewName] = useState("");
+  // holds the path we should auto-select once it shows up in the next tree update
+  const pendingSelectRef = useRef<string | null>(null);
 
   useEffect(() => {
     const handleFileTreeUpdate = (tree: FileTree) => {
       setFileTree(tree);
+
+      if (pendingSelectRef.current) {
+        setSelectedFile(pendingSelectRef.current);
+        pendingSelectRef.current = null;
+      }
     };
 
     socket.on("filetree:update", handleFileTreeUpdate);
@@ -39,38 +41,41 @@ const Explorer = () => {
     return () => {
       socket.off("filetree:update", handleFileTreeUpdate);
     };
-  }, [setFileTree]);
+  }, [setFileTree, setSelectedFile]);
 
   const handleRefresh = () => {
     socket.emit("filetree:refresh");
   };
 
-  const handleCreate = () => {
-    const name = newName.trim();
+  const handleCreateSubmit = (name: string) => {
+    if (!creating) return;
 
-    if (!name) {
-      setCreatingFile(false);
-      setCreatingFolder(false);
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setCreating(null);
       return;
     }
 
-    if (creatingFile) {
+    const fullPath = creating.parentPath
+      ? `${creating.parentPath}/${trimmed}`
+      : trimmed;
+
+    if (creating.type === "file") {
       socket.emit("file:create", {
-        relativePath: name,
+        relativePath: fullPath,
         content: "",
       });
-    }
-
-    if (creatingFolder) {
+      pendingSelectRef.current = fullPath;
+    } else {
       socket.emit("folder:create", {
-        relativePath: name,
+        relativePath: fullPath,
       });
     }
 
-    setNewName("");
-    setCreatingFile(false);
-    setCreatingFolder(false);
+    setCreating(null);
   };
+
+  const handleCreateCancel = () => setCreating(null);
 
   return (
     <div className="flex h-full flex-col border-r border-zinc-800 bg-black">
@@ -107,22 +112,22 @@ const Explorer = () => {
         <div className="mr-1 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
           <button
             onClick={() => {
-              setCreatingFolder(false);
-              setNewName("");
-              setCreatingFile(true);
+              if (!rootOpen) setRootOpen(true);
+              setCreating({ type: "file", parentPath: "" });
             }}
             className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+            title="New File"
           >
             <FilePlus2 size={14} />
           </button>
 
           <button
             onClick={() => {
-              setCreatingFile(false);
-              setNewName("");
-              setCreatingFolder(true);
+              if (!rootOpen) setRootOpen(true);
+              setCreating({ type: "folder", parentPath: "" });
             }}
             className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+            title="New Folder"
           >
             <FolderPlus size={14} />
           </button>
@@ -130,6 +135,7 @@ const Explorer = () => {
           <button
             onClick={handleRefresh}
             className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+            title="Refresh"
           >
             <RefreshCw size={14} />
           </button>
@@ -144,59 +150,26 @@ const Explorer = () => {
       {rootOpen && (
         <div className="flex-1 overflow-y-auto py-1">
           <div className="ml-4">
-
-            {(creatingFile || creatingFolder) && (
-              <div className="flex items-center gap-2 px-2 py-1">
-                {creatingFolder ? (
-                  <FolderOpen
-                    size={16}
-                    className="text-sky-400"
-                  />
-                ) : (
-                  <File
-                    size={16}
-                    className="text-zinc-400"
-                  />
-                )}
-
-                <input
-                  autoFocus
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  onBlur={() => {
-                    setCreatingFile(false);
-                    setCreatingFolder(false);
-                    setNewName("");
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      handleCreate();
-                    }
-
-                    if (e.key === "Escape") {
-                      setCreatingFile(false);
-                      setCreatingFolder(false);
-                      setNewName("");
-                    }
-                  }}
-                  placeholder={
-                    creatingFile
-                      ? "New file..."
-                      : "New folder..."
-                  }
-                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 text-sm text-zinc-200 outline-none focus:border-blue-500"
-                />
-              </div>
-            )}
-
             {Object.entries(fileTree).map(([name, node]) => (
               <TreeNode
                 key={name}
                 name={name}
                 node={node}
                 path={name}
+                creating={creating}
+                setCreating={setCreating}
+                onCreateSubmit={handleCreateSubmit}
+                onCreateCancel={handleCreateCancel}
               />
             ))}
+
+            {creating?.parentPath === "" && (
+              <InlineInput
+                type={creating.type}
+                onSubmit={handleCreateSubmit}
+                onCancel={handleCreateCancel}
+              />
+            )}
           </div>
         </div>
       )}
