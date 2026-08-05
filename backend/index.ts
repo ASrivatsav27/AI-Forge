@@ -95,6 +95,7 @@ io.on("connection", (socket: Socket) => {
           currentSession.preview.state = "STOPPED";
           currentSession.preview.hostPort = undefined;
           terminalBuffer = "";
+          console.log("Preview stopped detected");
           io.to(projectId).emit("preview:stopped");
           return;
         }

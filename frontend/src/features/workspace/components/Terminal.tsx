@@ -74,13 +74,18 @@ const Terminal = ({projectId,setPreviewPort}:TerminalProps) => {
 
   socket.on("preview:ready", handlePreviewReady);
 
- 
+   const handlePreviewStopped = () => {
+  setPreviewPort(null);
+};
+
+socket.on("preview:stopped", handlePreviewStopped);
 
     return () => {
       socket.emit("terminal:disconnect", { projectId });
       window.removeEventListener("resize", handleResize);
       socket.off("terminal:data", handleTerminalData);
       socket.off("preview:ready", handlePreviewReady);
+      socket.off("preview:stopped",handlePreviewStopped)
       term.dispose();
     };
   }, [projectId,setPreviewPort]);
