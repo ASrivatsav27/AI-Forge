@@ -7,23 +7,25 @@ export type SetupRequest = {
   prompt: string;
 };
 
-export type SetupPlan = {
-  framework: string;
-  commands: string[];
-};
+export type AgentAction =
+  | {
+      tool: "executeCommand";
+      command: string;
+    }
+  | {
+      tool: "finish";
+      reason: string;
+    };
 
 export async function setupAgent(
   data: SetupRequest
-): Promise<SetupPlan> {
+): Promise<AgentAction> {
   console.log("Setup Agent Started");
   console.log(data);
 
+  
   return {
-    framework: "react",
-    commands: [
-      "npm create vite@latest . -- --template react-ts",
-      "npm install",
-      "npm run dev -- --host 0.0.0.0",
-    ],
+    tool: "executeCommand",
+    command: "echo 'Hello Agent'"
   };
 }

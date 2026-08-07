@@ -47,7 +47,7 @@ export async function createProjectController(req: Request, res: Response) {
     name: "project/setup.requested",
     data: {
       projectId,
-      prompt,
+      prompt: "Create a React app", // temporary
     },
   })
   
