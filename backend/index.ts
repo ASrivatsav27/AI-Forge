@@ -209,7 +209,8 @@ socket.on("folder:create", async ({ relativePath }) => {
 
   await fs.mkdir(folderPath, { recursive: true });
 });
-  socket.on("fs:delete", async ({ relativePath }) => {
+
+socket.on("fs:delete", async ({ relativePath }) => {
   const session = socket.data.session;
   if (!session) return;
 
