@@ -46,6 +46,7 @@ export interface ClientToServerEvents {
   };
 }
 
+
 export interface ServerToClientEvents {
   "terminal:data": (data: string) => void;
 
@@ -53,8 +54,12 @@ export interface ServerToClientEvents {
 
   "preview:stopped": () => void;
 
+  "preview:error": () => void;
+
   "file:content": (data: {
     relativePath: string;
     content: string;
      }) => void;
+
+  "filetree:update": (fileTree: FileTree) => void;
 }

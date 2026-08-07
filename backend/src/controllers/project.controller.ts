@@ -5,11 +5,12 @@ import fs from "fs/promises";
 import path from "path";
 import { v4 as uuidv4 } from 'uuid';
 import { generateFileTree } from "../utils/fileTree.js";
-
-
+import {inngest} from  "../config/inngest.js" 
+import { getIO } from "../socket/io.js";
+import { createSession } from "../session/createSession.js";
 
 export async function createProjectController(req: Request, res: Response) {
-    const { name } = req.body
+    const { name,prompt } = req.body
     
     if (!name) {
        return res.status(400).json({
@@ -28,7 +29,7 @@ export async function createProjectController(req: Request, res: Response) {
       projectId,
       workspacePath
     );
-
+    
     const project = await prisma.project.create({
         data: {
         id: projectId,
@@ -39,7 +40,18 @@ export async function createProjectController(req: Request, res: Response) {
         }
 
     })
-    
+  
+  await createSession(project, getIO());
+  
+  await inngest.send({
+    name: "project/setup.requested",
+    data: {
+      projectId,
+      prompt,
+    },
+  })
+  
+  
     return res.status(201).json({
         message:"Project created successfully",project
     });
