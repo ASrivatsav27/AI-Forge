@@ -3,7 +3,6 @@ import { setupAgent } from "../agents/setup.agent.js";
 import { sessions } from "../session/session.manager.js";
 import { executeCommand } from "../services/executeCommand.js";
 
-
 export const setupWorkflow = inngest.createFunction(
   {
     id: "setup-workflow",
@@ -11,33 +10,40 @@ export const setupWorkflow = inngest.createFunction(
   },
   async ({ event, step }) => {
     await step.run("log-start", async () => {
-      const { projectId } = event.data
+      const { projectId, prompt } = event.data;
+
       console.log(`Starting setup workflow for project ${projectId}`);
-      const session =  sessions.get(projectId)
-      
+
+      const session = sessions.get(projectId);
+
       if (!session) {
-        throw new Error("Session not found")
+        throw new Error("Session not found");
       }
-  
-      const action = await setupAgent({
-       projectId,prompt:event.data.prompt,
-      })
-   
-      switch (action.tool) {
-        case "executeCommand": {
-          const result = await executeCommand(session, action.command)
 
-          break
+      let action = await setupAgent({
+        projectId,
+        prompt,
+      });
+
+      while (action.tool !== "finish") {
+        switch (action.tool) {
+          case "executeCommand": {
+            const result = await executeCommand(session, action.command);
+
+            action = await setupAgent({
+              projectId,
+              prompt,
+              observation: result.stdout,
+            });
+
+            break;
+          }
+        }
       }
-      case "finish":
+
       console.log(action.reason);
-      break;
-    }
-
- 
     });
 
     return { success: true };
   }
 );
-

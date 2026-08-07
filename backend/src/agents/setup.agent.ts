@@ -5,6 +5,7 @@
 export type SetupRequest = {
   projectId: string;
   prompt: string;
+  observation?: string;
 };
 
 export type AgentAction =
@@ -20,10 +21,12 @@ export type AgentAction =
 export async function setupAgent(
   data: SetupRequest
 ): Promise<AgentAction> {
-  console.log("Setup Agent Started");
-  console.log(data);
+    
+  console.log("Prompt:", data.prompt);
 
-  
+  if (!data.observation) {
+    console.log("Observation:", data.observation);
+  }
   return {
     tool: "executeCommand",
     command: "echo 'Hello Agent'"
