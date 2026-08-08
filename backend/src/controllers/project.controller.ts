@@ -47,7 +47,7 @@ export async function createProjectController(req: Request, res: Response) {
     name: "project/setup.requested",
     data: {
       projectId,
-      prompt: "Create a React app", // temporary
+      prompt: "Create a NextJS with shadcn ui project named ecommerce", // temporary
     },
   })
   
