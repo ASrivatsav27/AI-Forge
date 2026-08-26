@@ -12,12 +12,18 @@ import { createSession } from "../session/createSession.js";
 export async function createProjectController(req: Request, res: Response) {
     const { name,prompt } = req.body
     
-    if (!name) {
+    if (!name?.trim()) {
        return res.status(400).json({
             message:"enter a name"
         })
     }
      
+  if (!prompt?.trim()) {
+    return res.status(400).json({
+        message:"enter a prompt"
+      })
+    }
+  
     const userId = req.user.id
     const projectId = uuidv4()
     const workspacePath = path.resolve(process.env.WORKSPACE_PATH!, projectId);
@@ -47,7 +53,7 @@ export async function createProjectController(req: Request, res: Response) {
     name: "project/setup.requested",
     data: {
       projectId,
-      prompt: "Create a NextJS with shadcn ui project named ecommerce", // temporary
+      prompt,
     },
   })
   

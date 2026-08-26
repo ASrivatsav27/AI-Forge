@@ -2,5 +2,5 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
-  baseURL: "https://cc.freemodel.dev",
+  baseURL: "https://api.llmsrelay.com",
 });

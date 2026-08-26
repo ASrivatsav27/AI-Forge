@@ -1,7 +1,9 @@
 import docker from "../config/docker.js";
 
-export async function createContainer(projectId: string, workspacePath: string) {
-    
+export async function createContainer(
+  projectId: string,
+  workspacePath: string
+) {
   const container = await docker.createContainer({
     name: `project-${projectId}`,
     Image: "node:20-alpine",
@@ -11,6 +13,7 @@ export async function createContainer(projectId: string, workspacePath: string) 
 
     ExposedPorts: {
       "3000/tcp": {},
+      "3001/tcp": {},
       "5173/tcp": {},
       "8000/tcp": {},
     },
@@ -19,6 +22,7 @@ export async function createContainer(projectId: string, workspacePath: string) 
       Binds: [`${workspacePath}:/app`],
       PortBindings: {
         "3000/tcp": [{ HostPort: "0" }],
+        "3001/tcp": [{ HostPort: "0" }],
         "5173/tcp": [{ HostPort: "0" }],
         "8000/tcp": [{ HostPort: "0" }],
       },

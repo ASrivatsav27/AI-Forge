@@ -3,6 +3,7 @@ import { createContext, useState, type ReactNode } from "react";
 import { createProject,getAllProjects,getProjectDetails,deleteProject } from "@/services/project.api";
 
 
+
 type ProjectContextType = {
     projects: Project[];
     project: ProjectDetails | null;
@@ -34,11 +35,12 @@ export function ProjectProvider({ children }: ProjectProps) {
     const [loading, setLoading] = useState(false);
     const [fileTree, setFileTree] = useState<FileTree>({});
     const [selectedFile, setSelectedFile] = useState<string | null>(null);
+    
 
     const handleCreateProject = async(payload:createProjectPayload) => {
         setLoading(true)
         try {
-            const data = await createProject(payload.name)
+            const data = await createProject(payload.name,payload.prompt)
             setProjects(prev => [...prev, data.project]);
         } catch (err) {
             console.error(err)

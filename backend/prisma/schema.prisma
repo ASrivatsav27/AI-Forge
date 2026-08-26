@@ -74,18 +74,28 @@ model Verification {
   @@map("verification")
 }
 
+enum ProjectSetupStatus {
+  PENDING
+  IN_PROGRESS
+  READY
+  FAILED
+}
+
 model Project {
-  id          String   @id 
-  name        String       @default("Project")
+  id            String   @id
+  name          String   @default("Project")
   workspacePath String   @unique
 
-  containerId String?  @unique
+  containerId   String?  @unique
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  
+  setupStatus   ProjectSetupStatus @default(PENDING)
+  setupPrompt   String?
+  setupAttempts Int                @default(0)
+  setupError    String?
 
-  userId      String
-  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

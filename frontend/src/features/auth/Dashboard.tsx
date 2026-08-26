@@ -14,6 +14,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { handleCreateProject,handleGetAllProjects,projects,handleDeleteProject } = useProject()
   const [name, setName] = useState("");
+  const [prompt, setPrompt] = useState("");
   
   useEffect(() => {
     const fetchProjects = async () => {
@@ -35,7 +36,7 @@ export default function Dashboard() {
  
   async function handleSubmit(e:React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    await handleCreateProject({name})
+    await handleCreateProject({name,prompt})
   }
 
   if (isPending) {
@@ -64,6 +65,11 @@ return (
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
+            <Input placeholder="prompt"
+              value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            />
+
 
           <Button  type="submit">Create</Button>
           </form>

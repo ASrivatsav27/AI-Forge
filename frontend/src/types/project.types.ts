@@ -2,6 +2,7 @@
 
 export type createProjectPayload = {
     name: string,
+    prompt:string
 }
 
 

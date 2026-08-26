@@ -1,16 +1,11 @@
 import type { ProjectSession } from "../types/session.js";
-
-export interface CommandResult {
-  stdout: string;
-  success: boolean;
-}
+import { emitEvent } from "./runtime-events.js";
 
 type ActiveCommand = {
   buffer: string;
   promptIndex: number;
   waitingForInput: boolean;
   finished: boolean;
-  resolve: ((result: CommandResult) => void) | null;
   disposable: { dispose: () => void } | null;
 };
 
@@ -22,127 +17,151 @@ function stripAnsi(text: string): string {
     ""
   );
 }
-function isShellPrompt(text: string): boolean {
+
+function isInteractivePrompt(text: string): boolean {
   return (
-    /\r?\nPS [A-Z]:\\.*>\s*$/i.test(text) ||
-    /\r?\n[A-Z]:\\.*>\s*$/i.test(text) ||
-    /\r?\n\/.*\s#\s*$/i.test(text) ||
-    /\r?\n\/.*\s\$\s*$/i.test(text)
+    /Ok to proceed\? \(y\)/i.test(text) ||
+    /Which linter to use\?/i.test(text) ||
+    /Press Enter to continue/i.test(text)
   );
 }
-function resolveWaiting(
-  command: ActiveCommand,
-  stdout: string
-): void {
-  if (!command.resolve) {
-    return;
-  }
 
-  const resolve = command.resolve;
-  command.resolve = null;
+function isShellPrompt(text: string): boolean {
+  const clean = stripAnsi(text).trim();
 
-  resolve({
-    stdout,
-    success: true,
-  });
+  return (
+    /PS [A-Z]:\\.*>\s*$/i.test(clean) ||
+    /[A-Z]:\\.*>\s*$/i.test(clean) ||
+    /\/[^\r\n]*\s#\s*$/i.test(clean) ||
+    /\/[^\r\n]*\s\$\s*$/i.test(clean)
+  );
 }
 
-export async function executeCommand(
+function cleanupActiveCommand(
+  projectId: string,
+  command: ActiveCommand
+): void {
+  if (command.disposable) {
+    command.disposable.dispose();
+    command.disposable = null;
+  }
+
+  activeCommands.delete(projectId);
+}
+
+/*
+ * Starts a command on the session's PTY and returns immediately.
+ *
+ * This is fire-and-forget. The caller (the workflow) does not
+ * block on this call — it learns what happened by awaiting
+ * nextEvent(session), which receives whichever event this PTY
+ * listener, or createSession's preview detection, pushes next.
+ *
+ * The workflow never races this against anything. It is not this
+ * function's job to decide what "winning" means — it only reports
+ * factual PTY state via emitEvent().
+ */
+export function executeCommand(
   session: ProjectSession,
   command: string
-): Promise<CommandResult> {
+): void {
   const projectId = session.projectId;
 
-  return new Promise((resolve) => {
-    const active: ActiveCommand = {
-      buffer: "",
-      promptIndex: 0,
-      waitingForInput: false,
-      finished: false,
-      resolve,
-      disposable: null,
-    };
+  /*
+   * Do not allow two unrelated commands to occupy the same
+   * PTY at the same time.
+   *
+   * A long-running command (e.g. a dev server) is allowed to
+   * remain active — the agent stops it with sendInput(Ctrl+C)
+   * before starting another command.
+   */
+  const existing = activeCommands.get(projectId);
 
-    activeCommands.set(projectId, active);
+  if (existing && !existing.finished) {
+    throw new Error(
+      "Another command is already active for this session."
+    );
+  }
 
-    console.log("executeCommand started");
+  const active: ActiveCommand = {
+    buffer: "",
+    promptIndex: 0,
+    waitingForInput: false,
+    finished: false,
+    disposable: null,
+  };
 
-    active.disposable = session.pty.onData((data) => {
-      active.buffer += data;
+  activeCommands.set(projectId, active);
 
-      const clean = stripAnsi(active.buffer);
+  console.log("executeCommand started:", command);
 
-      // Detect a new interactive prompt.
-      if (
-        !active.finished &&
-        !active.waitingForInput &&
-        isInteractivePrompt(
-          stripAnsi(
-            active.buffer.slice(active.promptIndex)
-          )
-        )
-      ) {
-        active.waitingForInput = true;
-        active.promptIndex = active.buffer.length;
+  active.disposable = session.pty.onData((data) => {
+    active.buffer += data;
 
-        console.log("Interactive prompt detected");
+    const clean = stripAnsi(active.buffer);
 
-        resolveWaiting(active, clean);
+    const latestOutput = stripAnsi(
+      active.buffer.slice(active.promptIndex)
+    );
 
-        return;
-      }
+    /*
+     * ==========================================
+     * INTERACTIVE PROMPT
+     * ==========================================
+     */
 
-      // The command is currently running after input.
-      if (!active.waitingForInput) {
-        return;
-      }
+    if (
+      !active.finished &&
+      !active.waitingForInput &&
+      isInteractivePrompt(latestOutput)
+    ) {
+      active.waitingForInput = true;
+      active.promptIndex = active.buffer.length;
 
-      const latestOutput = stripAnsi(
-        active.buffer.slice(active.promptIndex)
-      );
+      console.log("Interactive prompt detected");
 
-      // Detect another interactive prompt.
-      if (isInteractivePrompt(latestOutput)) {
-        active.waitingForInput = true;
-        active.promptIndex = active.buffer.length;
+      emitEvent(session, {
+        kind: "promptDetected",
+        text: latestOutput,
+      });
 
-        console.log("Next interactive prompt detected");
+      return;
+    }
 
-        resolveWaiting(
-          active,
-          latestOutput
-        );
+    /*
+     * ==========================================
+     * SHELL PROMPT
+     * ==========================================
+     *
+     * The running command has returned to the shell —
+     * this covers normal completion as well as the shell
+     * reappearing after sendInput(Ctrl+C).
+     */
 
-        return;
-      }
+    if (
+      !active.finished &&
+      !active.waitingForInput &&
+      isShellPrompt(clean)
+    ) {
+      active.finished = true;
 
-      // Detect command returning to the shell.
-      if (isShellPrompt(clean)) {
-        active.finished = true;
-        active.waitingForInput = false;
+      console.log("Command finished - shell prompt detected");
 
-        const result: CommandResult = {
-          stdout: latestOutput,
-          success: true,
-        };
+      emitEvent(session, {
+        kind: "commandCompleted",
+        stdout: latestOutput,
+        success: true,
+      });
 
-        if (active.disposable) {
-          active.disposable.dispose();
-        }
+      cleanupActiveCommand(projectId, active);
 
-        activeCommands.delete(projectId);
-
-        resolveWaiting(
-          active,
-          result.stdout
-        );
-      }
-    });
-
-    console.log("Writing command");
-
-    session.pty.write(command + "\n");
+      return;
+    }
   });
+
+  console.log("Writing command");
+
+  session.pty.write(command + "\n");
 }
 
 export function sendInput(
@@ -150,44 +169,39 @@ export function sendInput(
   input: string
 ): void {
   console.log("sendInput started");
+  console.log("Writing input:", JSON.stringify(input));
 
-  console.log(
-    "Writing input:",
-    JSON.stringify(input)
-  );
+  /*
+   * Ctrl+C is PTY control input. It must be allowed even if
+   * there is no bookkeeping ActiveCommand — the PTY itself is
+   * the source of truth for the currently running foreground
+   * process. No preview timeout, no framework-specific casing:
+   * it is ordinary agent-controlled input like anything else.
+   */
+  const isCtrlC =
+    input === "\u0003" ||
+    input === "\\u0003" ||
+    input === "\x03";
 
-  const active = activeCommands.get(
-    session.projectId
-  );
+  if (isCtrlC) {
+    console.log("Sending Ctrl+C directly to PTY.");
+    session.pty.write("\u0003");
+    return;
+  }
+
+  /*
+   * Normal interactive answers still require an active command
+   * because "y", "n", and Enter must belong to a known
+   * interactive command.
+   */
+  const active = activeCommands.get(session.projectId);
 
   if (!active) {
     throw new Error("No active command.");
   }
 
-  /*
-   * The current prompt has been answered.
-   *
-   * Move the index forward so the old prompt
-   * cannot be detected again.
-   */
   active.promptIndex = active.buffer.length;
   active.waitingForInput = false;
 
   session.pty.write(input + "\n");
-}
-
-export async function waitForCommandResult(
-  session: ProjectSession
-): Promise<CommandResult> {
-  const active = activeCommands.get(
-    session.projectId
-  );
-
-  if (!active) {
-    throw new Error("No active command.");
-  }
-
-  return new Promise((resolve) => {
-    active.resolve = resolve;
-  });
 }

@@ -5,31 +5,62 @@ const sleep = (ms: number) =>
 
 export async function waitForPreview(
   port: string,
-  timeout = 30000
+  timeout = 60000
 ): Promise<boolean> {
   const start = Date.now();
 
   while (Date.now() - start < timeout) {
     try {
+      console.log(
+        `[previewProbe] requesting http://localhost:${port}/`
+      );
+
       await new Promise<void>((resolve, reject) => {
-        const req = http.get(`http://localhost:${port}`, (res) => {
-          res.resume();
-          resolve();
+        const req = http.get(
+          `http://localhost:${port}/`,
+          (res) => {
+            console.log(
+              `[previewProbe] response status: ${res.statusCode}`
+            );
+
+            res.resume();
+
+            resolve();
+          }
+        );
+
+        req.on("error", (error) => {
+          console.log(
+            "[previewProbe] request error:",
+            error
+          );
+
+          reject(error);
         });
 
-        req.on("error", reject);
+        // Give the application enough time to perform
+        // first-request compilation.
+        req.setTimeout(15000, () => {
+          console.log(
+            "[previewProbe] request timeout after 15s"
+          );
 
-        req.setTimeout(1000, () => {
           req.destroy();
-          reject(new Error("Timeout"));
+          reject(new Error("Request timeout"));
         });
       });
+
+      console.log("[previewProbe] preview request succeeded");
 
       return true;
     } catch {
       await sleep(500);
     }
   }
+
+  console.log(
+    `[previewProbe] timed out after ${timeout}ms`
+  );
 
   return false;
 }
