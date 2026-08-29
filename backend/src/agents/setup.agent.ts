@@ -1,4 +1,63 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { anthropic } from "../services/ai.service.js";
+
+// ─── Tool definitions ──────────────────────────────────────────────────────────
+
+const AGENT_TOOLS: Anthropic.Tool[] = [
+  {
+    name: "executeCommand",
+    description:
+      "Execute a single shell command in the project workspace. " +
+      "Use this to scaffold, install dependencies, or start the dev server.",
+    input_schema: {
+      type: "object",
+      properties: {
+        command: {
+          type: "string",
+          description: "The shell command to run.",
+        },
+      },
+      required: ["command"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "sendInput",
+    description:
+      'Send input to the currently running interactive process. ' +
+      'Use special values: "\\r" for Enter, "\\u0003" for Ctrl-C.',
+    input_schema: {
+      type: "object",
+      properties: {
+        input: {
+          type: "string",
+          description: "The input string to send to the process.",
+        },
+      },
+      required: ["input"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "finish",
+    description:
+      "Signal that setup is complete. Call this ONLY after the runtime " +
+      "has confirmed the preview is verified and reachable.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          description: "A short explanation of why setup is now complete.",
+        },
+      },
+      required: ["reason"],
+      additionalProperties: false,
+    },
+  },
+];
+
+// ─── System prompt ─────────────────────────────────────────────────────────────
 const SYSTEM_PROMPT = `
 You are the AI Forge Setup Agent.
 
@@ -741,6 +800,9 @@ The JSON must contain exactly ONE action.
   "reason": "..."
 }
 `;
+
+// ─── Types ─────────────────────────────────────────────────────────────────────
+
 export type SetupRequest = {
   projectId: string;
   prompt: string;
@@ -748,105 +810,98 @@ export type SetupRequest = {
 };
 
 export type AgentAction =
-  | {
-      tool: "executeCommand";
-      command: string;
-    }
-  | {
-      tool: "sendInput";
-      input: string;
-    }
-  | {
-      tool: "finish";
-      reason: string;
-    };
+  | { tool: "executeCommand"; command: string }
+  | { tool: "sendInput"; input: string }
+  | { tool: "finish"; reason: string };
 
-export async function setupAgent(
-  data: SetupRequest
-): Promise<AgentAction> {
-  const message =
-    await anthropic.messages.create({
-      model: "claude-opus-4-6",
-      max_tokens: 1024,
-      system: SYSTEM_PROMPT,
-      messages: [
-        {
-          role: "user",
-          content: `
-User request:
-${data.prompt}
+// ─── Errors ────────────────────────────────────────────────────────────────────
 
-Previous observation:
-${
-  data.observation ??
-  "None. This is the first action."
+export class AgentActionParseError extends Error {
+  constructor(
+    message: string,
+    public readonly raw: unknown,
+  ) {
+    super(message);
+    this.name = "AgentActionParseError";
+  }
 }
 
-Decide the next action.
-`,
-        },
-      ],
-    });
+// ─── Validation ────────────────────────────────────────────────────────────────
 
-  const textBlock =
-    message.content.find(
-      (block) => block.type === "text"
-    );
+function parseToolUse(block: Anthropic.ToolUseBlock): AgentAction {
+  const input = block.input as Record<string, unknown>;
 
-  if (
-    !textBlock ||
-    textBlock.type !== "text"
-  ) {
-    throw new Error(
-      "LLM returned no text response."
-    );
-  }
-
-  const content = textBlock.text;
-
-  console.log("LLM Response:");
-  console.log(content);
-
-  let response = content.trim();
-
-  /*
-   * Remove markdown code fences if the endpoint
-   * returns them despite the system instruction.
-   */
-  response = response
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/```$/i, "")
-    .trim();
-
-  /*
-   * Some gateway/model combinations may incorrectly
-   * produce \xNN inside JSON.
-   *
-   * Convert it into valid JSON unicode escaping.
-   *
-   * Example:
-   * "\x1B" -> "\u001B"
-   */
-  response = response.replace(
-    /\\x([0-9a-fA-F]{2})/g,
-    (_, hex: string) => {
-      return `\\u00${hex}`;
+  switch (block.name) {
+    case "executeCommand": {
+      if (typeof input.command !== "string") {
+        throw new AgentActionParseError(
+          `executeCommand: expected input.command to be a string, got ${typeof input.command}`,
+          block,
+        );
+      }
+      return { tool: "executeCommand", command: input.command };
     }
+
+    case "sendInput": {
+      if (typeof input.input !== "string") {
+        throw new AgentActionParseError(
+          `sendInput: expected input.input to be a string, got ${typeof input.input}`,
+          block,
+        );
+      }
+      return { tool: "sendInput", input: input.input };
+    }
+
+    case "finish": {
+      if (typeof input.reason !== "string") {
+        throw new AgentActionParseError(
+          `finish: expected input.reason to be a string, got ${typeof input.reason}`,
+          block,
+        );
+      }
+      return { tool: "finish", reason: input.reason };
+    }
+
+    default: {
+      throw new AgentActionParseError(
+        `Unknown tool name returned by model: "${block.name}"`,
+        block,
+      );
+    }
+  }
+}
+
+// ─── Agent ─────────────────────────────────────────────────────────────────────
+
+export async function setupAgent(data: SetupRequest): Promise<AgentAction> {
+  const message = await anthropic.messages.create({
+    model: "claude-opus-4-6",
+    max_tokens: 1024,
+    system: SYSTEM_PROMPT,
+    tools: AGENT_TOOLS,
+    tool_choice: { type: "any" },
+    messages: [
+      {
+        role: "user",
+        content: `User request:\n${data.prompt}\n\nLatest observation:\n${
+          data.observation ?? "None. This is the first action."
+        }\n\nDecide the next action.`,
+      },
+    ],
+  });
+
+  const toolUseBlock = message.content.find(
+    (block): block is Anthropic.ToolUseBlock => block.type === "tool_use",
   );
 
-  console.log("CLEANED RESPONSE:");
-  console.log(response);
-
-  try {
-    return JSON.parse(
-      response
-    ) as AgentAction;
-  } catch (error) {
-    console.error(
-      "Invalid LLM JSON:"
+  if (!toolUseBlock) {
+    throw new AgentActionParseError(
+      "No tool_use block found in model response.",
+      message.content,
     );
-    console.error(response);
-    throw error;
   }
+
+  console.log("Agent action:", toolUseBlock.name, toolUseBlock.input);
+
+  return parseToolUse(toolUseBlock);
 }

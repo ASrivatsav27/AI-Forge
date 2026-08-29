@@ -4,7 +4,8 @@ import { prisma } from "../config/db.js";
 import { getIO } from "../socket/io.js";
 import { createSession } from "../session/createSession.js";
 import { ensureContainerRunning } from "../services/docker.service.js";
-import { setupAgent } from "../agents/setup.agent.js";
+import { setupAgent, AgentActionParseError } from "../agents/setup.agent.js";
+import type { AgentAction } from "../agents/setup.agent.js";
 import { sessions } from "../session/session.manager.js";
 
 import { executeCommand, sendInput } from "../services/executeCommand.js";
@@ -257,11 +258,22 @@ export const setupWorkflow = inngest.createFunction(
 
       console.log("Current sessions:", [...sessions.keys()]);
 
-      let action = await setupAgent({
-        projectId,
-        prompt,
-        observation: isRecovery ? recoveryObservation : undefined,
-      });
+      async function nextAction(observation?: string): Promise<AgentAction> {
+        try {
+          return await setupAgent({ projectId, prompt, observation });
+        } catch (err) {
+          if (err instanceof AgentActionParseError) {
+            throw new NonRetriableError(
+              `Agent returned an unrecognisable action: ${err.message}`
+            );
+          }
+          throw err;
+        }
+      }
+
+      let action = await nextAction(
+        isRecovery ? recoveryObservation : undefined
+      );
 
       let iterations = 0;
 
@@ -290,13 +302,7 @@ export const setupWorkflow = inngest.createFunction(
           executeCommand(session, action.command);
 
           const evt = await nextEvent(session);
-
-          action = await setupAgent({
-            projectId,
-            prompt,
-            observation: observationFromEvent(evt),
-          });
-
+          action = await nextAction(observationFromEvent(evt));
           continue;
         }
 
@@ -319,13 +325,7 @@ export const setupWorkflow = inngest.createFunction(
           sendInput(session, action.input);
 
           const evt = await nextEvent(session);
-
-          action = await setupAgent({
-            projectId,
-            prompt,
-            observation: observationFromEvent(evt),
-          });
-
+          action = await nextAction(observationFromEvent(evt));
           continue;
         }
 

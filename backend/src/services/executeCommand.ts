@@ -22,7 +22,8 @@ function isInteractivePrompt(text: string): boolean {
   return (
     /Ok to proceed\? \(y\)/i.test(text) ||
     /Which linter to use\?/i.test(text) ||
-    /Press Enter to continue/i.test(text)
+    /Press Enter to continue/i.test(text) ||
+    /Install with npm and start now\?/i.test(text)
   );
 }
 
@@ -191,8 +192,8 @@ export function sendInput(
 
   /*
    * Normal interactive answers still require an active command
-   * because "y", "n", and Enter must belong to a known
-   * interactive command.
+   * because "y", "n", arrow/menu selections, and Enter must all
+   * belong to a known interactive command.
    */
   const active = activeCommands.get(session.projectId);
 
@@ -200,8 +201,48 @@ export function sendInput(
     throw new Error("No active command.");
   }
 
+  /*
+   * Reset bookkeeping BEFORE writing any bytes, for every
+   * non-Ctrl+C input path (including SELECT_NO below). This is
+   * what allows isShellPrompt() to fire again afterward — the
+   * completion check in executeCommand's onData handler is
+   * gated on !active.waitingForInput. If this reset is skipped
+   * or done after a special-cased early return, the prompt will
+   * be answered correctly but commandCompleted will never emit,
+   * and the workflow will hang waiting for an event that can't
+   * come.
+   */
   active.promptIndex = active.buffer.length;
   active.waitingForInput = false;
+
+  /*
+   * ==========================================
+   * SELECT_NO
+   * ==========================================
+   *
+   * Some scaffolding tools (e.g. create-vite) render a
+   * keyboard-navigated Yes/No menu rather than accepting a
+   * literal "y"/"n" keystroke. Sending "n" + Enter to that kind
+   * of prompt does not select "No" — it can be interpreted as
+   * arbitrary text input by the underlying prompt library.
+   *
+   * SELECT_NO translates the agent's intent ("choose No") into
+   * the actual raw escape sequence the prompt expects: move the
+   * highlighted selection down one item, then confirm with
+   * Enter. The agent itself never sends raw ANSI bytes; this
+   * translation happens here, inside sendInput.
+   */
+  if (input === "SELECT_NO") {
+  console.log("Sending Arrow Down to select No.");
+  session.pty.write("\u001b[B");
+  return;
+}
+
+if (input === "CONFIRM_SELECTION") {
+  console.log("Sending Enter to confirm selection.");
+  session.pty.write("\r");
+  return;
+}
 
   session.pty.write(input + "\n");
 }
