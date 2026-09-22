@@ -1,7 +1,6 @@
-import type { Project,ProjectDetails,ProjectDetailsPayload,FileTree, createProjectPayload, DeleteProjectPayload } from "@/types/project.types";
-import { createContext, useState, type ReactNode } from "react";
+import type { Project,ProjectDetails,ProjectDetailsPayload,FileTree,createProjectPayload,DeleteProjectPayload } from "@/types/project.types";
+import { createContext,useState,type ReactNode } from "react";
 import { createProject,getAllProjects,getProjectDetails,deleteProject } from "@/services/project.api";
-
 
 
 type ProjectContextType = {
@@ -10,9 +9,9 @@ type ProjectContextType = {
     fileTree: FileTree;
     loading: boolean;
 
-     selectedFile: string | null;
-     setSelectedFile: React.Dispatch<React.SetStateAction<string | null>>;
-     setFileTree: React.Dispatch<React.SetStateAction<FileTree>>
+    selectedFile: string | null;
+    setSelectedFile: React.Dispatch<React.SetStateAction<string | null>>;
+    setFileTree: React.Dispatch<React.SetStateAction<FileTree>>
 
     handleCreateProject: (payload: createProjectPayload) => Promise<void>;
     handleGetAllProjects: () => Promise<void>;
@@ -38,20 +37,29 @@ export function ProjectProvider({ children }: ProjectProps) {
     
 
     const handleCreateProject = async(payload:createProjectPayload) => {
-        setLoading(true)
-        try {
-            const data = await createProject(payload.name,payload.prompt)
-            setProjects(prev => [...prev, data.project]);
-        } catch (err) {
-            console.error(err)
-            throw err
-        } finally {
-            setLoading(false)
-        }
-    }
+       setLoading(true)
+       try {
+           const data = await createProject(
+               payload.name,
+               payload.prompt,
+               payload.framework,
+               payload.backend,
+               payload.database,
+               payload.architecture,
+               payload.connectionString
+           )
+   
+           setProjects(prev => [...prev, data.project]);
+   
+           return data.project;
+       } catch (err) {
+           console.error(err)
+           throw err
+       } finally {
+           setLoading(false)
+       }
+      }                          
     
-    
-
     const handleGetProjectDetails = async (payload:ProjectDetailsPayload) => {
         setLoading(true)
         try {
@@ -66,6 +74,7 @@ export function ProjectProvider({ children }: ProjectProps) {
         }
     }
 
+
     const handleGetAllProjects = async () => {
         setLoading(true)
         try {
@@ -79,14 +88,15 @@ export function ProjectProvider({ children }: ProjectProps) {
         }
     }
    
+
     const handleDeleteProject = async (payload:DeleteProjectPayload) => {
         setLoading(true)
         try {
             await deleteProject(payload.id)
             
-        setProjects(prev =>
-            prev.filter(project => project.id !== payload.id)
-        );
+            setProjects(prev =>
+                prev.filter(project => project.id !== payload.id)
+            );
         } catch (err) {
             console.log(err)
             throw err
@@ -96,8 +106,21 @@ export function ProjectProvider({ children }: ProjectProps) {
     }
 
 
-    return (<ProjectContext.Provider value={{fileTree,project,projects,handleCreateProject,handleGetAllProjects,handleDeleteProject,handleGetProjectDetails,selectedFile,setSelectedFile,loading,setFileTree}}>
+    return (
+        <ProjectContext.Provider value={{
+            fileTree,
+            project,
+            projects,
+            handleCreateProject,
+            handleGetAllProjects,
+            handleDeleteProject,
+            handleGetProjectDetails,
+            selectedFile,
+            setSelectedFile,
+            loading,
+            setFileTree
+        }}>
             {children}
-           </ProjectContext.Provider>
-        )
+        </ProjectContext.Provider>
+    )
 }

@@ -8,9 +8,10 @@ import { generateFileTree } from "../utils/fileTree.js";
 import {inngest} from  "../config/inngest.js" 
 import { getIO } from "../socket/io.js";
 import { createSession } from "../session/createSession.js";
+import { setupRequested } from "../config/inngest.js";
 
 export async function createProjectController(req: Request, res: Response) {
-    const { name,prompt } = req.body
+    const { name,prompt,framework,backend,database,architecture,connectionString} = req.body
     
     if (!name?.trim()) {
        return res.status(400).json({
@@ -24,6 +25,11 @@ export async function createProjectController(req: Request, res: Response) {
       })
     }
   
+  if (!framework) {
+    return res.status(400).json({
+      message:"Select a Development environment"
+    })
+  }
     const userId = req.user.id
     const projectId = uuidv4()
     const workspacePath = path.resolve(process.env.WORKSPACE_PATH!, projectId);
@@ -49,13 +55,19 @@ export async function createProjectController(req: Request, res: Response) {
   
   await createSession(project, getIO());
   
-  await inngest.send({
-    name: "project/setup.requested",
-    data: {
-      projectId,
-      prompt,
+  await inngest.send(
+  setupRequested.create({
+    projectId,
+    prompt,
+    setupContext: {
+      framework,
+      backend,
+      database,
+      architecture,
+      connectionString,
     },
   })
+);
   
   
     return res.status(201).json({

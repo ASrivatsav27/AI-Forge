@@ -1,23 +1,31 @@
-
-
 export type createProjectPayload = {
-    name: string,
-    prompt:string
-}
+    name: string;
+    prompt: string;
+
+    framework: string;
+    backend?: string;
+    database?: string;
+    architecture?: string;
+    connectionString?: string;
+};
 
 
 export type DeleteProjectPayload = {
-    id: string,
-    
-}
+    id: string;
+};
+
+
 // Dashboard
+
 export interface Project {
     id: string;
     name: string;
     createdAt: string;
 }
 
+
 // IDE page
+
 export interface ProjectDetails extends Project {
     workspacePath: string;
     containerId: string;
@@ -25,9 +33,11 @@ export interface ProjectDetails extends Project {
     ports: Record<string, string>;
 }
 
+
 export type ProjectDetailsPayload = {
-     id: string
-}
+    id: string;
+};
+
 
 export type FileTree = {
     [key: string]: FileTree | null;

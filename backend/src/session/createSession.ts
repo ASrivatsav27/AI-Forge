@@ -1,27 +1,20 @@
 import { emitEvent } from "../services/runtime-events.js";
-
 import * as pty from "node-pty";
-
 import chokidar from "chokidar";
-
 import type { Server } from "socket.io";
-
 import type { Project } from "@prisma/client";
-
 import docker from "../config/docker.js";
-
 import { generateFileTree } from "../utils/fileTree.js";
-
 import { waitForPreview } from "../services/previewProbe.js";
-
 import type { ProjectSession } from "../types/session.js";
-
 import type {
   ClientToServerEvents,
   ServerToClientEvents,
 } from "../types/file.js";
-
 import { sessions } from "./session.manager.js";
+
+
+
 
 const STOP_SIGNAL_PATTERN = /\^C/;
 
@@ -69,7 +62,15 @@ export async function createSession(
     project.workspacePath,
     {
       ignoreInitial: true,
-      ignored: /(node_modules|\.git)/,
+      /*
+       * .next, dist, and build are generated output / dev-server scratch
+       * space, not source the file tree needs to reflect — same category
+       * as node_modules and .git. This also sharply reduces exposure to
+       * EPERM races on transient files the Next.js dev server creates and
+       * deletes almost immediately (e.g. .next/dev/tmp_file_io_benchmark_*),
+       * which chokidar can lose the race to open a watch handle on.
+       */
+      ignored: /(node_modules|\.git|\.next|dist|build)/,
     }
   );
 
@@ -84,6 +85,7 @@ export async function createSession(
       state: "IDLE",
       hostPort: undefined,
     },
+    stopRequested: false,
   };
 
   const currentSession = session;
@@ -139,6 +141,7 @@ export async function createSession(
          ======================================================== */
 
       if (
+        currentSession.stopRequested &&
         (
           currentSession.preview
             .state === "READY" ||
@@ -149,6 +152,15 @@ export async function createSession(
           terminalBuffer
         )
       ) {
+        /*
+         * Consume the stop request. Without this, a stray `^C`-shaped
+         * sequence appearing later (e.g. in real compiler output, or
+         * a delayed echo) could fire STOP DETECTION again for an
+         * attempt that was never actually asked to stop.
+         */
+        currentSession.stopRequested =
+          false;
+
         currentSession.preview.state =
           "STOPPED";
 
@@ -373,7 +385,20 @@ export async function createSession(
           "Waiting for preview..."
         );
 
-        const ready =
+        /*
+         * FIX: waitForPreview now returns
+         *   { ready: true } | { ready: false; reason: string }
+         * instead of a plain boolean. An object is ALWAYS truthy
+         * in JS, so the old `if (!ready)` check could never fire —
+         * every call fell through to the READY branch regardless
+         * of what actually happened, including a genuine compile
+         * error or a full timeout.
+         *
+         * Destructure the real shape and use the REAL captured
+         * reason (the actual Next.js error body surfaced by
+         * previewProbe.ts), not a generic placeholder string.
+         */
+        const preview =
           await waitForPreview(
             hostPort
           );
@@ -392,12 +417,12 @@ export async function createSession(
           return;
         }
 
-        if (!ready) {
-          const reason =
-            `Preview HTTP verification timed out for host port ${hostPort}.`;
+        if (!preview.ready) {
+          const reason = preview.reason;
 
           console.log(
-            "Preview timeout"
+            "Preview failed:",
+            reason
           );
 
           currentSession.preview.state =
@@ -418,6 +443,14 @@ export async function createSession(
            *
            * Without this, nextEvent(session)
            * would wait forever after a failed preview.
+           *
+           * `reason` now carries the ACTUAL captured error body
+           * from previewProbe.ts (e.g. the Next.js compile error
+           * with the broken file's path and line number), not a
+           * generic "verification timed out" placeholder. This is
+           * what lets extractErrorFilePath() in coding.agent.ts
+           * actually find the broken file instead of always
+           * falling back to "last written".
            */
           emitEvent(currentSession, {
             kind: "previewError",
@@ -552,6 +585,29 @@ export async function createSession(
           err
         );
       }
+    }
+  );
+
+  /*
+   * MANDATORY: chokidar's FSWatcher is an EventEmitter. If it emits
+   * "error" with no listener attached, Node treats it as an uncaught
+   * exception and crashes the ENTIRE process — not just this session,
+   * every active project/session on the backend goes down with it.
+   *
+   * This has already happened in practice: an EPERM trying to watch a
+   * transient Next.js dev-server scratch file
+   * (.next/dev/tmp_file_io_benchmark_*) with no listener here took the
+   * whole backend down. A watch failure on one path should degrade
+   * gracefully (that path's changes just won't show up in the file
+   * tree) — it must never be allowed to kill the process.
+   */
+  watcher.on(
+    "error",
+    (err) => {
+      console.error(
+        `Workspace watcher error for project ${projectId}:`,
+        err
+      );
     }
   );
 

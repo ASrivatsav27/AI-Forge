@@ -7,8 +7,25 @@ const api = axios.create({
 
 
 
-export async function createProject(name:string,prompt:string) {
-    const response = await api.post("/createProject",{name,prompt})
+export async function createProject(
+    name: string,
+    prompt: string,
+    framework: string,
+    backend?: string,
+    database?: string,
+    architecture?: string,
+    connectionString?: string
+) {
+    const response = await api.post("/createProject", {
+        name,
+        prompt,
+        framework,
+        backend,
+        database,
+        architecture,
+        connectionString,
+    })
+
     return response.data
 }
 

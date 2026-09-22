@@ -9,6 +9,7 @@ import { serve } from "inngest/express";
 import { inngest } from "./config/inngest.js"
 import { functions } from "./workflows/index.js";
 
+console.log(process.env.ANTHROPIC_API_KEY)
 const app = express()
 
 app.use(cors({origin: "http://localhost:3000",credentials: true,}));

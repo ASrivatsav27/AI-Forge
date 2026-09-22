@@ -1,8 +1,12 @@
+import { useRef } from "react";
+
 type Props = {
   port: string | null;
 };
 
 const ProjectPreview = ({ port }: Props) => {
+const previewRef = useRef<HTMLIFrameElement>(null)
+
   if (!port) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -19,5 +23,6 @@ const ProjectPreview = ({ port }: Props) => {
     />
   );
 };
+
 
 export default ProjectPreview;

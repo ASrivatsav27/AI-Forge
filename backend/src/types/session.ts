@@ -6,10 +6,13 @@ export type ProjectSession = {
   watcher: FSWatcher;
   clients: Set<string>;
   workspacePath: string;
-  projectId:string
+  projectId: string
+  containerId: string,
     preview: {
       state: "IDLE" | "STARTING" | "READY" | "STOPPED" | "ERROR";
 
     hostPort?: string | undefined;
   };
+
+  stopRequested: boolean;
 };

@@ -1,17 +1,23 @@
-import { Inngest } from "inngest"
+import {
+  Inngest,
+  eventType,
+  staticSchema,
+} from "inngest";
+import type { SetupContext,SetupRequestedData,CodingRequestedData } from "../types/inngest.types.js";
+export const inngest = new Inngest({
+  id: "AI-Forge",
+});
 
-export const inngest = new Inngest({ id: "AI-Forge" });
-
-
-const helloWorld = inngest.createFunction(
-  { id: "hello-world", triggers: [{ event: "test/hello.world" }] },
-  async ({ event, step }) => {
-    await step.sleep("wait-a-moment", "1s");
-    return { message: `Hello ${event.data.email}!` };
-  },
+export const setupRequested = eventType(
+  "project/setup.requested",
+  {
+    schema: staticSchema<SetupRequestedData>(),
+  }
 );
 
-// Add the function to the exported array:
-export const functions = [
-  helloWorld
-];
+export const codingRequested = eventType(
+  "project/coding.requested",
+  {
+    schema: staticSchema<CodingRequestedData>(),
+  }
+);

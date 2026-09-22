@@ -31,6 +31,7 @@ import {
   SiPostgresql,
 } from "react-icons/si";
 
+
 type Environment =
   | "next"
   | "next-db"
@@ -38,7 +39,9 @@ type Environment =
   | "react-express"
   | "react-express-db";
 
+
 type Database = "postgresql" | "mongodb";
+
 
 const environments = [
   {
@@ -72,6 +75,7 @@ const environments = [
     logos: ["react", "express"],
   },
 ];
+
 
 function FrameworkLogo({ type }: { type: string }) {
   const baseClasses =
@@ -118,9 +122,37 @@ function FrameworkLogo({ type }: { type: string }) {
   }
 }
 
+
 function getDatabaseLogo(database: Database) {
   return database === "mongodb" ? "mongodb" : "postgres";
 }
+
+
+function getDefaultSetupPrompt(
+  environment: Environment,
+  database: Database
+) {
+  switch (environment) {
+    case "next":
+      return `Set up a Next.js frontend project using the selected environment. Install the required dependencies and make sure the frontend can run successfully. Do not implement the application's features yet.`;
+
+    case "next-db":
+      return `Set up a Next.js project with the selected database configuration. Install the required frontend dependencies and prepare the project to run successfully. Do not implement the application's features yet.`;
+
+    case "react":
+      return `Set up a React + Vite frontend project. Install the required dependencies and make sure the frontend can run successfully. Do not implement the application's features yet.`;
+
+    case "react-express":
+      return `Set up the React + Vite frontend environment. Install the required frontend dependencies and make sure the frontend can run successfully. Do not create or implement the Express backend yet. The Coding Agent will handle the backend.`;
+
+    case "react-express-db":
+      return `Set up the React + Vite frontend environment. Install the required frontend dependencies and make sure the frontend can run successfully. Do not create or implement the Express backend or database layer yet. The Coding Agent will handle the backend and database implementation.`;
+
+    default:
+      return "";
+  }
+}
+
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -133,7 +165,11 @@ export default function Dashboard() {
     loading,
   } = useProject();
 
+
   const [name, setName] = useState("");
+  const [setupPrompt, setSetupPrompt] = useState(
+    getDefaultSetupPrompt("next", "postgresql")
+  );
   const [prompt, setPrompt] = useState("");
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -147,6 +183,7 @@ export default function Dashboard() {
   const [connectionString, setConnectionString] =
     useState("");
 
+
   useEffect(() => {
     const fetchProjects = async () => {
       await handleGetAllProjects();
@@ -155,103 +192,93 @@ export default function Dashboard() {
     fetchProjects();
   }, []);
 
+
   const { isPending } = authClient.useSession();
+
 
   async function handleLogout() {
     await authClient.signOut();
     navigate("/login");
   }
 
+
   const needsDatabase =
     environment === "next-db" ||
     environment === "react-express-db";
 
-  function buildSetupPrompt() {
-    switch (environment) {
-      case "next":
-        return `
-Development environment:
-Next.js
-Language:
-TypeScript
-`.trim();
 
-      case "next-db":
-        return `
-Development environment:
-Next.js + Database
-Framework:
-Next.js
-Language:
-TypeScript
-Database:
-${database}
-Database connection string:
-${connectionString}
-`.trim();
+  function handleEnvironmentChange(
+    newEnvironment: Environment
+  ) {
+    setEnvironment(newEnvironment);
 
-      case "react":
-        return `
-Development environment:
-React
-Framework:
-Vite
-Language:
-TypeScript
-`.trim();
-
-      case "react-express":
-        return `
-Development environment:
-React + Express
-Frontend:
-React + Vite + TypeScript
-Backend:
-Express + TypeScript
-Backend architecture:
-MVC
-`.trim();
-
-      case "react-express-db":
-        return `
-Development environment:
-React + Express + Database
-Frontend:
-React + Vite + TypeScript
-Backend:
-Express + TypeScript
-Backend architecture:
-MVC
-Database:
-${database}
-Database connection string:
-${connectionString}
-`.trim();
-    }
+    setSetupPrompt(
+      getDefaultSetupPrompt(
+        newEnvironment,
+        database
+      )
+    );
   }
+
 
   async function handleSubmit(
     e: React.FormEvent<HTMLFormElement>
   ) {
     e.preventDefault();
 
-    const setupPrompt = buildSetupPrompt();
-
-    await handleCreateProject({
-      name,
-      prompt: `${setupPrompt}
+    const combinedPrompt = `${setupPrompt.trim()}
 
 User's application requirements:
-${prompt}`,
+${prompt.trim()}`;
+
+
+    const project = await handleCreateProject({
+      name,
+      prompt: combinedPrompt,
+
+      framework:
+        environment === "next" ||
+        environment === "next-db"
+          ? "Next.js"
+          : "React",
+
+      backend:
+        environment === "react-express" ||
+        environment === "react-express-db"
+          ? "Express"
+          : undefined,
+
+      database:
+        needsDatabase
+          ? database
+          : undefined,
+
+      architecture:
+        environment === "react-express" ||
+        environment === "react-express-db"
+          ? "MVC"
+          : undefined,
+
+      connectionString:
+        needsDatabase
+          ? connectionString
+          : undefined,
     });
 
+
     setName("");
+    setSetupPrompt(
+      getDefaultSetupPrompt("next", "postgresql")
+    );
     setPrompt("");
     setEnvironment("next");
     setDatabase("postgresql");
     setConnectionString("");
     setDialogOpen(false);
+
+    navigate(`/workspace/${project.id}`);
   }
+
 
   if (isPending) {
     return (
@@ -263,11 +290,14 @@ ${prompt}`,
     );
   }
 
+
   return (
     <div className="min-h-screen bg-black text-white">
 
       {/* Navbar */}
+
       <header className="border-b border-zinc-800/80 bg-black/80 backdrop-blur">
+
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
 
           <div>
@@ -280,17 +310,20 @@ ${prompt}`,
             </p>
           </div>
 
+
           <div className="flex items-center gap-3">
 
             <Dialog
               open={dialogOpen}
               onOpenChange={setDialogOpen}
             >
+
               <DialogTrigger asChild>
                 <Button className="bg-white text-black hover:bg-zinc-200">
                   + New Project
                 </Button>
               </DialogTrigger>
+
 
               <DialogContent
                 className="
@@ -317,12 +350,14 @@ ${prompt}`,
                   </DialogDescription>
                 </DialogHeader>
 
+
                 <form
                   onSubmit={handleSubmit}
                   className="mt-6 space-y-6"
                 >
 
                   {/* Project Name */}
+
                   <div className="space-y-2">
 
                     <label className="text-sm font-medium text-zinc-300">
@@ -347,7 +382,9 @@ ${prompt}`,
 
                   </div>
 
+
                   {/* Development Environment */}
+
                   <div className="space-y-3">
 
                     <div>
@@ -359,6 +396,7 @@ ${prompt}`,
                         Choose the stack AI Forge should set up.
                       </p>
                     </div>
+
 
                     <div className="grid gap-3 sm:grid-cols-2">
 
@@ -372,7 +410,9 @@ ${prompt}`,
                             key={env.id}
                             type="button"
                             onClick={() =>
-                              setEnvironment(env.id)
+                              handleEnvironmentChange(
+                                env.id
+                              )
                             }
                             className={`
                               rounded-xl
@@ -389,6 +429,7 @@ ${prompt}`,
                           >
 
                             {/* Logos */}
+
                             <div className="mb-4 flex items-center gap-2">
 
                               {env.logos.map(
@@ -412,7 +453,9 @@ ${prompt}`,
                                 )
                               )}
 
+
                               {/* Dynamic database logo */}
+
                               {needsDatabase &&
                                 env.id === environment && (
                                   <>
@@ -430,6 +473,7 @@ ${prompt}`,
 
                             </div>
 
+
                             <h3 className="font-medium text-white">
                               {env.name}
                             </h3>
@@ -446,7 +490,9 @@ ${prompt}`,
 
                   </div>
 
+
                   {/* Database Configuration */}
+
                   {needsDatabase && (
                     <div
                       className="
@@ -471,10 +517,13 @@ ${prompt}`,
 
                       </div>
 
+
                       {/* Database Options */}
+
                       <div className="grid gap-3 sm:grid-cols-2">
 
                         {/* PostgreSQL */}
+
                         <button
                           type="button"
                           onClick={() =>
@@ -496,19 +545,22 @@ ${prompt}`,
 
                           <div className="flex items-center gap-3">
 
-                            <div className="
-                              flex
-                              h-10
-                              w-10
-                              items-center
-                              justify-center
-                              rounded-lg
-                              border
-                              border-zinc-800
-                              bg-black
-                            ">
+                            <div
+                              className="
+                                flex
+                                h-10
+                                w-10
+                                items-center
+                                justify-center
+                                rounded-lg
+                                border
+                                border-zinc-800
+                                bg-black
+                              "
+                            >
                               <SiPostgresql className="text-lg text-blue-400" />
                             </div>
+
 
                             <div>
                               <p className="text-sm font-medium">
@@ -524,7 +576,9 @@ ${prompt}`,
 
                         </button>
 
+
                         {/* MongoDB */}
+
                         <button
                           type="button"
                           onClick={() =>
@@ -546,19 +600,22 @@ ${prompt}`,
 
                           <div className="flex items-center gap-3">
 
-                            <div className="
-                              flex
-                              h-10
-                              w-10
-                              items-center
-                              justify-center
-                              rounded-lg
-                              border
-                              border-zinc-800
-                              bg-black
-                            ">
+                            <div
+                              className="
+                                flex
+                                h-10
+                                w-10
+                                items-center
+                                justify-center
+                                rounded-lg
+                                border
+                                border-zinc-800
+                                bg-black
+                              "
+                            >
                               <SiMongodb className="text-lg text-emerald-500" />
                             </div>
+
 
                             <div>
                               <p className="text-sm font-medium">
@@ -576,7 +633,9 @@ ${prompt}`,
 
                       </div>
 
+
                       {/* Connection String */}
+
                       <div className="mt-4 space-y-2">
 
                         <label className="text-sm font-medium text-zinc-300">
@@ -611,7 +670,54 @@ ${prompt}`,
                     </div>
                   )}
 
+
+                  {/* Setup Prompt */}
+
+                  <div className="space-y-2">
+
+                    <label className="text-sm font-medium text-zinc-300">
+                      Setup instructions
+                    </label>
+
+                    <p className="text-xs text-zinc-500">
+                      Instructions for preparing the development
+                      environment. These are sent together with
+                      your application request.
+                    </p>
+
+                    <textarea
+                      placeholder="Set up the selected development environment..."
+                      value={setupPrompt}
+                      onChange={(e) =>
+                        setSetupPrompt(e.target.value)
+                      }
+                      required
+                      rows={5}
+                      className="
+                        flex
+                        w-full
+                        resize-none
+                        rounded-md
+                        border
+                        border-zinc-800
+                        bg-zinc-900
+                        px-3
+                        py-3
+                        text-sm
+                        text-white
+                        outline-none
+                        placeholder:text-zinc-600
+                        focus:border-zinc-600
+                        focus:ring-1
+                        focus:ring-zinc-600
+                      "
+                    />
+
+                  </div>
+
+
                   {/* Application Prompt */}
+
                   <div className="space-y-2">
 
                     <label className="text-sm font-medium text-zinc-300">
@@ -648,12 +754,15 @@ ${prompt}`,
 
                   </div>
 
+
                   {/* Submit */}
+
                   <Button
                     type="submit"
                     disabled={
                       loading ||
                       !name.trim() ||
+                      !setupPrompt.trim() ||
                       !prompt.trim() ||
                       (needsDatabase &&
                         !connectionString.trim())
@@ -675,6 +784,7 @@ ${prompt}`,
               </DialogContent>
             </Dialog>
 
+
             <Button
               variant="ghost"
               onClick={handleLogout}
@@ -691,7 +801,9 @@ ${prompt}`,
         </div>
       </header>
 
+
       {/* Main */}
+
       <main className="mx-auto max-w-7xl px-6 py-10">
 
         <div className="mb-10">
@@ -706,7 +818,9 @@ ${prompt}`,
 
         </div>
 
+
         {/* Empty State */}
+
         {projects.length === 0 ? (
 
           <div
@@ -743,14 +857,17 @@ ${prompt}`,
               ✦
             </div>
 
+
             <h3 className="text-lg font-medium">
               No projects yet
             </h3>
+
 
             <p className="mt-2 max-w-sm text-sm text-zinc-500">
               Create your first project and let AI Forge
               set up your development environment.
             </p>
+
 
             <Button
               onClick={() => setDialogOpen(true)}
@@ -772,12 +889,14 @@ ${prompt}`,
 
             <div className="mb-4 flex items-center justify-between">
 
-              <span className="
-                text-xs
-                uppercase
-                tracking-wider
-                text-zinc-600
-              ">
+              <span
+                className="
+                  text-xs
+                  uppercase
+                  tracking-wider
+                  text-zinc-600
+                "
+              >
                 {projects.length}{" "}
                 {projects.length === 1
                   ? "project"
@@ -786,7 +905,9 @@ ${prompt}`,
 
             </div>
 
+
             {/* Project Grid */}
+
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 
               {projects.map((project) => (
@@ -821,6 +942,7 @@ ${prompt}`,
 
                       </div>
 
+
                       <div
                         className="
                           mt-1
@@ -837,16 +959,19 @@ ${prompt}`,
 
                   </CardHeader>
 
+
                   <CardContent>
 
-                    <div className="
-                      flex
-                      items-center
-                      justify-between
-                      border-t
-                      border-zinc-800
-                      pt-4
-                    ">
+                    <div
+                      className="
+                        flex
+                        items-center
+                        justify-between
+                        border-t
+                        border-zinc-800
+                        pt-4
+                      "
+                    >
 
                       <Button
                         onClick={() =>
@@ -862,6 +987,7 @@ ${prompt}`,
                       >
                         Open IDE
                       </Button>
+
 
                       <Button
                         variant="ghost"
@@ -894,6 +1020,7 @@ ${prompt}`,
         )}
 
       </main>
+
     </div>
   );
 }

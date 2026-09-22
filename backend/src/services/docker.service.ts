@@ -1,9 +1,6 @@
 import docker from "../config/docker.js";
 
-export async function createContainer(
-  projectId: string,
-  workspacePath: string
-) {
+export async function createContainer(projectId: string,workspacePath: string){
   const container = await docker.createContainer({
     name: `project-${projectId}`,
     Image: "node:20-alpine",
