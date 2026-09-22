@@ -28,6 +28,7 @@ import fs from "fs/promises";
 import path from "path";
 
 import type { ProjectSession } from "../types/session.js";
+import { emitAgentStatus } from "../services/agent-status.js";
 
 // ============================================================
 // CONFIG
@@ -142,23 +143,6 @@ async function waitForPreviewOutcome(
 // ============================================================
 
 async function stopActiveCommandAndDrain(session: ProjectSession): Promise<void> {
-  /*
-   * FIX: declare intent BEFORE sending the interrupt.
-   *
-   * STOP DETECTION in createSession.js used to fire off a pure
-   * `/\^C/.test(terminalBuffer)` text match while state was
-   * READY/STARTING. terminalBuffer is only cleared when STOP
-   * DETECTION itself fires or when a new attempt's port is
-   * extracted — NOT the instant a real Ctrl+C is sent — so a
-   * leftover `^C` echo from THIS stop could still be sitting in
-   * the buffer when the NEXT verify attempt starts and flips state
-   * back to STARTING, killing the new (possibly now-fixed) attempt
-   * for a reason unrelated to it, before it ever reached the HTTP
-   * probe. Setting this flag lets STOP DETECTION require an actual
-   * requested stop in addition to the text match, so a stray or
-   * delayed `^C`-shaped byte sequence can never masquerade as an
-   * intentional stop again.
-   */
   session.stopRequested = true;
 
   sendInput(session, "\u0003");
@@ -176,14 +160,6 @@ async function stopActiveCommandAndDrain(session: ProjectSession): Promise<void>
     `WARNING: no commandCompleted observed after ${MAX_STOP_DRAIN_EVENTS} drained events following Ctrl+C. ` +
       `Proceeding anyway — the next executeCommand call may throw if bookkeeping wasn't cleaned up.`,
   );
-  /*
-   * Note: if the ^C echo never arrived within the drain window,
-   * session.stopRequested is intentionally left true here. It's
-   * safe to leave set — it only ever gates a genuine ^C text match
-   * inside createSession.js's STOP DETECTION and is cleared there
-   * the moment that match is consumed. It never triggers a stop by
-   * itself.
-   */
 }
 
 // ============================================================
@@ -233,6 +209,8 @@ export const codingWorkflow = inngest.createFunction(
         listWorkspaceFiles(session.workspacePath, ".")
       );
 
+      emitAgentStatus(projectId, "coding", "coding:planning", "Analyzing your request…");
+
       const plan: ExecutionPlan = await step.run("plan", () =>
         planProject({
           projectId,
@@ -243,6 +221,8 @@ export const codingWorkflow = inngest.createFunction(
         })
       );
 
+      emitAgentStatus(projectId, "coding", "coding:planning", `Plan ready — ${plan.files.length} files`);
+
       console.log(`Plan produced ${plan.files.length} files, ${plan.setupCommands.length} setup commands`);
 
       // ====================================================
@@ -251,6 +231,9 @@ export const codingWorkflow = inngest.createFunction(
 
       for (let i = 0; i < plan.setupCommands.length; i++) {
         const command = plan.setupCommands[i]!;
+
+        emitAgentStatus(projectId, "coding", "coding:setup-command", command);
+
         await step.run(`setup-command-${i}`, async () => {
           console.log("===== SETUP COMMAND =====");
           console.log(command);
@@ -276,6 +259,12 @@ export const codingWorkflow = inngest.createFunction(
 
         console.log(`Batch ${b + 1}/${batches.length}: ${batch.map((f) => f.path).join(", ")}`);
 
+        for (const file of batch) {
+          emitAgentStatus(projectId, "coding", "coding:generating", `Writing ${file.path}`, {
+            file: file.path,
+          });
+        }
+
         const results = await Promise.all(
           batch.map((file) =>
             step.run(`generate-${file.path}`, async () => {
@@ -293,9 +282,6 @@ export const codingWorkflow = inngest.createFunction(
                 }
               }
 
-              // exactOptionalPropertyTypes: only include the key when there's
-              // an actual value — passing `existingContent: undefined`
-              // explicitly is a type error against an optional `?: string`.
               const content = await generateFileContent({
                 file,
                 userPrompt: prompt,
@@ -310,6 +296,12 @@ export const codingWorkflow = inngest.createFunction(
             })
           )
         );
+
+        for (const { path: filePath } of results) {
+          emitAgentStatus(projectId, "coding", "coding:generating", `${filePath} done`, {
+            file: filePath,
+          });
+        }
 
         for (const { path: filePath, content } of results) {
           writtenContent[filePath] = content;
@@ -327,6 +319,8 @@ export const codingWorkflow = inngest.createFunction(
       let lastError: string | null = null;
 
       for (let fixAttempt = 0; fixAttempt <= MAX_FIX_ATTEMPTS; fixAttempt++) {
+        emitAgentStatus(projectId, "coding", "coding:verifying", "Starting dev server and checking preview…");
+
         const verifyResult = await step.run(`verify-${fixAttempt}`, async () => {
           console.log("===== VERIFY: STARTING DEV SERVER =====");
           console.log(plan.verifyCommand);
@@ -338,6 +332,7 @@ export const codingWorkflow = inngest.createFunction(
 
         if (verifyResult.ready) {
           previewReady = true;
+          emitAgentStatus(projectId, "coding", "coding:done", "Preview is live.");
           break;
         }
 
@@ -352,6 +347,8 @@ export const codingWorkflow = inngest.createFunction(
 
         if (missingPackage) {
           console.log(`Detected missing package: ${missingPackage} — installing instead of patching a file.`);
+
+          emitAgentStatus(projectId, "coding", "coding:installing", `Installing ${missingPackage}…`);
 
           await step.run(`install-missing-${fixAttempt}-${missingPackage}`, async () => {
             executeCommand(session, `npm install ${missingPackage}`);
@@ -377,6 +374,11 @@ export const codingWorkflow = inngest.createFunction(
         );
 
         const targetFile = plan.files.find((f) => f.path === targetPath)!;
+
+        emitAgentStatus(projectId, "coding", "coding:fixing", `Fixing ${targetPath}`, {
+          file: targetPath,
+          attempt: fixAttempt + 1,
+        });
 
         const fixedContent = await step.run(`fix-${fixAttempt}-${targetPath}`, async () => {
           const content = await fixFile({
@@ -411,6 +413,13 @@ export const codingWorkflow = inngest.createFunction(
 
       return result;
     } catch (err) {
+      emitAgentStatus(
+        projectId,
+        "coding",
+        "error",
+        err instanceof Error ? err.message : String(err),
+      );
+
       if (err instanceof DailyTokenLimitError) {
         console.error(
           `Daily token limit hit for project ${projectId}. ` +

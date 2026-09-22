@@ -9,6 +9,7 @@ import {
 import Terminal from "../components/Terminal";
 import ProjectPreview from "../components/ProjectPreview";
 import Explorer from "../components/Explorer";
+import AgentActivityPanel from "../components/AgentActivityPanel";
 import { useProject } from "@/hooks/useProject";
 import MonacoEditor from "../components/MonacoEditor";
 
@@ -38,15 +39,22 @@ const WorkSpacePage = () => {
   return (
     <div className="h-screen overflow-hidden">
       <PanelGroup direction="horizontal" autoSaveId="workspace-layout">
+        {/* Agent — sidebar */}
+        <Panel defaultSize={16} minSize={12} maxSize={28}>
+          <AgentActivityPanel projectId={projectId!} />
+        </Panel>
+
+        <ResizeHandle />
+
         {/* Explorer */}
-        <Panel defaultSize={18} minSize={12} maxSize={25}>
+        <Panel defaultSize={16} minSize={12} maxSize={25}>
           <Explorer/>
         </Panel>
 
         <ResizeHandle />
 
         {/* Editor + Terminal */}
-        <Panel defaultSize={47} minSize={30}>
+        <Panel defaultSize={38} minSize={30}>
           <PanelGroup
             direction="vertical"
             autoSaveId="editor-terminal-layout"
@@ -71,7 +79,7 @@ const WorkSpacePage = () => {
         <ResizeHandle />
 
         {/* Preview */}
-        <Panel defaultSize={35} minSize={20}>
+        <Panel defaultSize={30} minSize={20}>
           <ProjectPreview port={previewPort} />
         </Panel>
       </PanelGroup>

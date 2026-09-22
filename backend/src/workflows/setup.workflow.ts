@@ -1,4 +1,3 @@
-
 import { inngest, codingRequested } from "../config/inngest.js";
 import { NonRetriableError } from "inngest";
 import { prisma } from "../config/db.js";
@@ -18,6 +17,7 @@ import {
 import { nextEvent } from "../services/runtime-events.js";
 import type { RuntimeEvent } from "../services/runtime-events.js";
 import type { ProjectSession } from "../types/session.js";
+import { emitAgentStatus } from "../services/agent-status.js";
 
 type SetupContext = {
   framework: string;
@@ -201,6 +201,13 @@ export const setupWorkflow = inngest.createFunction(
         return;
       }
 
+      emitAgentStatus(
+        projectId,
+        "setup",
+        "error",
+        error?.message ?? "Setup failed after all retries.",
+      );
+
       await prisma.project.update({
         where: {
           id: projectId,
@@ -252,6 +259,8 @@ export const setupWorkflow = inngest.createFunction(
       });
     });
 
+    emitAgentStatus(projectId, "setup", "setup:starting", "Setting up your project…");
+
     const result = await step.run(
       "setup-project",
       async (): Promise<SetupResult> => {
@@ -259,156 +268,198 @@ export const setupWorkflow = inngest.createFunction(
           `Starting setup workflow for project ${projectId}`
         );
 
-        const {
-          session,
-          isRecovery,
-          recoveryObservation,
-        } = await getOrRecreateSession(projectId);
+        try {
+          const {
+            session,
+            isRecovery,
+            recoveryObservation,
+          } = await getOrRecreateSession(projectId);
 
-        console.log(
-          "Current sessions:",
-          [...sessions.keys()]
-        );
-
-        async function nextAction(
-          observation?: string
-        ): Promise<AgentAction> {
-          try {
-            return await setupAgent({
+          if (isRecovery) {
+            emitAgentStatus(
               projectId,
-              prompt,
-              setupContext,
-              observation,
-            });
-          } catch (err) {
-            if (err instanceof AgentActionParseError) {
-              throw new NonRetriableError(
-                `Agent returned an unrecognisable action: ${err.message}`
+              "setup",
+              "setup:recovering",
+              "Recovering previous session…",
+            );
+          }
+
+          console.log(
+            "Current sessions:",
+            [...sessions.keys()]
+          );
+
+          async function nextAction(
+            observation?: string
+          ): Promise<AgentAction> {
+            try {
+              return await setupAgent({
+                projectId,
+                prompt,
+                setupContext,
+                observation,
+              });
+            } catch (err) {
+              if (err instanceof AgentActionParseError) {
+                throw new NonRetriableError(
+                  `Agent returned an unrecognisable action: ${err.message}`
+                );
+              }
+
+              throw err;
+            }
+          }
+
+          let action = await nextAction(
+            isRecovery
+              ? recoveryObservation
+              : undefined
+          );
+
+          let iterations = 0;
+
+          let lastExecutedCommand:
+            | string
+            | undefined;
+
+          let verifiedDevCommand:
+            | string
+            | undefined;
+
+          while (action.tool !== "finish") {
+            iterations++;
+
+            if (iterations > MAX_ITERATIONS) {
+              throw new Error(
+                `Setup agent exceeded ${MAX_ITERATIONS} iterations without finishing. Aborting.`
               );
             }
 
-            throw err;
-          }
-        }
+            if (action.tool === "executeCommand") {
+              console.log(
+                "===== EXECUTE COMMAND ====="
+              );
 
-        let action = await nextAction(
-          isRecovery
-            ? recoveryObservation
-            : undefined
-        );
+              console.log(action.command);
 
-        let iterations = 0;
+              console.log(
+                "============================"
+              );
 
-        let lastExecutedCommand:
-          | string
-          | undefined;
+              emitAgentStatus(
+                projectId,
+                "setup",
+                "setup:command",
+                action.command,
+              );
 
-        let verifiedDevCommand:
-          | string
-          | undefined;
+              lastExecutedCommand = action.command;
 
-        while (action.tool !== "finish") {
-          iterations++;
+              executeCommand(
+                session,
+                action.command
+              );
 
-          if (iterations > MAX_ITERATIONS) {
-            throw new Error(
-              `Setup agent exceeded ${MAX_ITERATIONS} iterations without finishing. Aborting.`
-            );
-          }
+              const evt = await nextEvent(session);
 
-          if (action.tool === "executeCommand") {
-            console.log(
-              "===== EXECUTE COMMAND ====="
-            );
+              if (evt.kind === "previewReady") {
+                emitAgentStatus(
+                  projectId,
+                  "setup",
+                  "setup:verifying",
+                  "Preview verified.",
+                );
 
-            console.log(action.command);
+                verifiedDevCommand =
+                  lastExecutedCommand;
+              }
 
-            console.log(
-              "============================"
-            );
+              action = await nextAction(
+                observationFromEvent(evt)
+              );
 
-            lastExecutedCommand = action.command;
-
-            executeCommand(
-              session,
-              action.command
-            );
-
-            const evt = await nextEvent(session);
-
-            if (evt.kind === "previewReady") {
-              verifiedDevCommand =
-                lastExecutedCommand;
+              continue;
             }
 
-            action = await nextAction(
-              observationFromEvent(evt)
-            );
+            if (action.tool === "sendInput") {
+              console.log(
+                "===== SEND INPUT ====="
+              );
 
-            continue;
+              console.log(
+                "Input:",
+                JSON.stringify(action.input)
+              );
+
+              console.log(
+                "======================="
+              );
+
+              emitAgentStatus(
+                projectId,
+                "setup",
+                "setup:input",
+                `Sending input: ${JSON.stringify(action.input)}`,
+              );
+
+              sendInput(
+                session,
+                action.input
+              );
+
+              const evt = await nextEvent(session);
+
+              action = await nextAction(
+                observationFromEvent(evt)
+              );
+
+              continue;
+            }
+
+            throw new Error(
+              `Unknown agent action: ${JSON.stringify(action)}`
+            );
           }
 
-          if (action.tool === "sendInput") {
-            console.log(
-              "===== SEND INPUT ====="
+          console.log(
+            "===== SETUP FINISHED ====="
+          );
+
+          console.log(action.reason);
+
+          const previewReady =
+            session.preview.state === "READY";
+
+          if (!previewReady) {
+            throw new Error(
+              "Agent finished setup without a verified preview."
             );
-
-            console.log(
-              "Input:",
-              JSON.stringify(action.input)
-            );
-
-            console.log(
-              "======================="
-            );
-
-            sendInput(
-              session,
-              action.input
-            );
-
-            const evt = await nextEvent(session);
-
-            action = await nextAction(
-              observationFromEvent(evt)
-            );
-
-            continue;
           }
 
-          throw new Error(
-            `Unknown agent action: ${JSON.stringify(action)}`
+          emitAgentStatus(projectId, "setup", "setup:done", action.reason);
+
+          return {
+            success: true,
+            reason: action.reason,
+            previewReady: true,
+
+            ...(session.preview.hostPort !== undefined && {
+              hostPort: session.preview.hostPort,
+            }),
+
+            ...(verifiedDevCommand !== undefined && {
+              devCommand: verifiedDevCommand,
+            }),
+          };
+        } catch (err) {
+          emitAgentStatus(
+            projectId,
+            "setup",
+            "error",
+            err instanceof Error ? err.message : String(err),
           );
+          throw err;
         }
-
-        console.log(
-          "===== SETUP FINISHED ====="
-        );
-
-        console.log(action.reason);
-
-        const previewReady =
-          session.preview.state === "READY";
-
-        if (!previewReady) {
-          throw new Error(
-            "Agent finished setup without a verified preview."
-          );
-        }
-
-        return {
-          success: true,
-          reason: action.reason,
-          previewReady: true,
-
-          ...(session.preview.hostPort !== undefined && {
-            hostPort: session.preview.hostPort,
-          }),
-
-          ...(verifiedDevCommand !== undefined && {
-            devCommand: verifiedDevCommand,
-          }),
-        };
       }
     );
 

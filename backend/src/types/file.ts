@@ -1,4 +1,5 @@
 import type{ FileTree } from "../utils/fileTree.js";
+import type { AgentStatusEvent } from "./agent-events.js";
 
 
 export interface ClientToServerEvents {
@@ -62,4 +63,6 @@ export interface ServerToClientEvents {
      }) => void;
 
   "filetree:update": (fileTree: FileTree) => void;
+  "agent:status":(event:AgentStatusEvent) => void
 }
+
