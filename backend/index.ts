@@ -160,7 +160,13 @@ socket.on("fs:delete", async ({ relativePath }) => {
      if ( !filePath.startsWith(path.resolve(session.workspacePath))) {
         return;
     }
-    await fs.writeFile(filePath, content);
+
+    try {
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, content);
+    } catch (err) {
+      console.error(`file:save failed for ${relativePath}:`, err);
+    }
   })
 
   

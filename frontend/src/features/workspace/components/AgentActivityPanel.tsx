@@ -1,11 +1,12 @@
 // src/components/AgentActivityPanel.tsx
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, XCircle, Send } from "lucide-react";
+import { CheckCircle2, XCircle, Send, Sparkles, Loader2 } from "lucide-react";
 
 import socket from "@/sockets/socket";
 import type { AgentStatusEvent, AgentStage } from "@/types/agent.types";
 import { useProject } from "@/hooks/useProject";
+import LiveFileGenCard from "./LiveFileGenCard";
 
 type Props = {
   projectId: string;
@@ -18,54 +19,59 @@ const STAGE_HEADLINE: Record<AgentStage, string> = {
   coding: "Building your app",
 };
 
+const MAX_FEATURED_CARDS = 3;
+
 const AgentActivityPanel = ({ projectId }: Props) => {
   const [current, setCurrent] = useState<AgentStatusEvent | null>(null);
 
-  const { handleSendFollowUpPrompt } = useProject();
+  const { handleSendFollowUpPrompt, fileGenState, planTotalFiles, selectedFile, setSelectedFile } = useProject();
 
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
-  const [pendingConfirm, setPendingConfirm] = useState<string | null>(null);
 
   useEffect(() => {
-    const handleAgentStatus = (evt: AgentStatusEvent) => {
-      setCurrent(evt);
-
-      // A run just started or completed — any stale confirmation prompt no longer applies.
-      setPendingConfirm(null);
-    };
+    const handleAgentStatus = (evt: AgentStatusEvent) => setCurrent(evt);
 
     socket.on("agent:status", handleAgentStatus);
 
     return () => {
       socket.off("agent:status", handleAgentStatus);
     };
-  }, [projectId]);
+  }, []);
 
   const active = current && !isTerminal(current.phase);
   const headline = current ? STAGE_HEADLINE[current.stage] : null;
 
-  async function submitPrompt(force: boolean) {
+  const showLiveGen = planTotalFiles !== null && active;
+
+  const filesArr = Object.entries(fileGenState).sort((a, b) => a[1].startedAt - b[1].startedAt);
+  // The file currently shown live in Monaco is never also rendered as a
+  // generation card — it already has a dedicated, more detailed view.
+  const generating = filesArr.filter(
+    ([path, s]) => s.status === "generating" && path !== selectedFile
+  );
+  const completed = filesArr.filter(([, s]) => s.status === "done");
+
+  const featured = generating.slice(0, MAX_FEATURED_CARDS);
+  const extraGenerating = generating.slice(MAX_FEATURED_CARDS);
+
+  const totalFiles = planTotalFiles ?? 0;
+  const accountedFor = filesArr.length;
+  const notStartedCount = Math.max(0, totalFiles - accountedFor);
+  const progressPct = totalFiles > 0 ? Math.min(100, (completed.length / totalFiles) * 100) : 0;
+
+  async function submitPrompt() {
     if (!prompt.trim() || sending) return;
 
     setSending(true);
 
     try {
-      const result = await handleSendFollowUpPrompt({
+      await handleSendFollowUpPrompt({
         projectId,
         prompt: prompt.trim(),
-        force,
       });
 
-      if (result.requiresConfirmation) {
-        setPendingConfirm(
-          result.message ?? "A run is already in progress. Stop it and continue?"
-        );
-        return;
-      }
-
       setPrompt("");
-      setPendingConfirm(null);
     } catch (err) {
       console.error(err);
     } finally {
@@ -75,7 +81,7 @@ const AgentActivityPanel = ({ projectId }: Props) => {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    submitPrompt(false);
+    submitPrompt();
   }
 
   return (
@@ -111,6 +117,13 @@ const AgentActivityPanel = ({ projectId }: Props) => {
           background: #d4d4d8;
           animation: dot-pulse 1.1s ease-in-out infinite;
         }
+        @keyframes caret-blink {
+          0%, 49% { opacity: 1; }
+          50%, 100% { opacity: 0; }
+        }
+        .agent-caret-blink {
+          animation: caret-blink 1s step-end infinite;
+        }
       `}</style>
 
       <div className="border-b border-zinc-800 px-3 py-2">
@@ -119,89 +132,114 @@ const AgentActivityPanel = ({ projectId }: Props) => {
         </p>
       </div>
 
-      <div className="flex flex-1 items-center justify-center px-4">
-        {!current && (
-          <p className="text-[13px] text-zinc-600">Waiting for agent…</p>
-        )}
+      {!showLiveGen && (
+        <div className="flex flex-1 items-center justify-center px-4">
+          {!current && <p className="text-[13px] text-zinc-600">Waiting for agent…</p>}
 
-        {current && (
-          <div className="flex items-center gap-2.5">
-            {active ? (
-              <>
-                <span className="agent-dot shrink-0" />
-                <span className="text-[14px] font-medium shimmer-text">
-                  {headline}…
-                </span>
-              </>
-            ) : current.phase === "error" ? (
-              <>
-                <XCircle size={15} className="shrink-0 text-red-400" />
-                <span className="text-[14px] font-medium text-zinc-300">
-                  {headline} failed
-                </span>
-              </>
-            ) : (
-              <>
-                <CheckCircle2 size={15} className="shrink-0 text-emerald-400" />
-                <span className="text-[14px] font-medium text-zinc-300">
-                  {headline} done
-                </span>
-              </>
-            )}
-          </div>
-        )}
-      </div>
+          {current && (
+            <div className="flex items-center gap-2.5">
+              {active ? (
+                <>
+                  <span className="agent-dot shrink-0" />
+                  <span className="text-[14px] font-medium shimmer-text">{headline}…</span>
+                </>
+              ) : current.phase === "error" ? (
+                <>
+                  <XCircle size={15} className="shrink-0 text-red-400" />
+                  <span className="text-[14px] font-medium text-zinc-300">{headline} failed</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 size={15} className="shrink-0 text-emerald-400" />
+                  <span className="text-[14px] font-medium text-zinc-300">{headline} done</span>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
-      <div className="border-t border-zinc-800 p-2.5">
-        {pendingConfirm && (
-          <div className="mb-2 rounded-md border border-amber-900/50 bg-amber-950/30 p-2.5">
-            <p className="text-[12px] leading-snug text-amber-200">
-              {pendingConfirm}
+      {showLiveGen && (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="border-b border-zinc-800 px-3 py-2.5">
+            <div className="flex items-center gap-1.5">
+              <Sparkles size={13} className="shrink-0 text-violet-400" />
+              <span className="text-[13px] font-medium text-zinc-200">{headline}…</span>
+            </div>
+            <p className="mt-0.5 text-[11px] text-zinc-500">
+              Generating {totalFiles} files in parallel
             </p>
 
-            <div className="mt-2 flex gap-2">
-              <button
-                type="button"
-                disabled={sending}
-                onClick={() => submitPrompt(true)}
-                className="
-                  rounded
-                  bg-amber-500/90
-                  px-2.5
-                  py-1
-                  text-[12px]
-                  font-medium
-                  text-black
-                  hover:bg-amber-400
-                  disabled:opacity-50
-                "
-              >
-                Stop it, continue
-              </button>
-
-              <button
-                type="button"
-                disabled={sending}
-                onClick={() => setPendingConfirm(null)}
-                className="
-                  rounded
-                  border
-                  border-zinc-700
-                  px-2.5
-                  py-1
-                  text-[12px]
-                  font-medium
-                  text-zinc-300
-                  hover:bg-zinc-900
-                  disabled:opacity-50
-                "
-              >
-                Cancel
-              </button>
+            <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-zinc-800">
+              <div
+                className="h-full rounded-full bg-violet-500 transition-all duration-300"
+                style={{ width: `${progressPct}%` }}
+              />
             </div>
+            <p className="mt-1 text-right text-[10.5px] text-zinc-500">
+              {completed.length} / {totalFiles}
+            </p>
           </div>
-        )}
 
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-2.5">
+            {featured.map(([path, state]) => (
+              <LiveFileGenCard
+                key={path}
+                path={path}
+                content={state.content}
+                onOpen={() => setSelectedFile(path)}
+              />
+            ))}
+
+            {extraGenerating.map(([path]) => (
+              <button
+                key={path}
+                onClick={() => setSelectedFile(path)}
+                className="flex w-full items-center justify-between rounded px-1.5 py-1 text-left hover:bg-zinc-900"
+              >
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <Loader2 size={11} className="shrink-0 animate-spin text-violet-400" />
+                  <span className="truncate text-[12px] text-zinc-300">
+                    {path.split("/").pop()}
+                  </span>
+                </span>
+                <span className="shrink-0 text-[11px] text-zinc-500">Generating…</span>
+              </button>
+            ))}
+
+            {completed.map(([path]) => (
+              <button
+                key={path}
+                onClick={() => setSelectedFile(path)}
+                className="flex w-full items-center justify-between rounded px-1.5 py-1 text-left hover:bg-zinc-900"
+              >
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <CheckCircle2 size={12} className="shrink-0 text-emerald-400" />
+                  <span className="truncate text-[12px] text-zinc-300">
+                    {path.split("/").pop()}
+                  </span>
+                </span>
+                <span className="shrink-0 text-[11px] text-zinc-500">Done</span>
+              </button>
+            ))}
+
+            {notStartedCount > 0 && (
+              <p className="px-1.5 py-1 text-[11px] text-zinc-600">
+                + {notStartedCount} more file{notStartedCount === 1 ? "" : "s"}…
+              </p>
+            )}
+          </div>
+
+          <div className="flex items-start gap-2 border-t border-zinc-800 px-3 py-2">
+            <Sparkles size={12} className="mt-0.5 shrink-0 text-zinc-600" />
+            <p className="text-[10.5px] leading-snug text-zinc-600">
+              These updates are temporary. They&apos;ll disappear once the build is complete.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <div className="border-t border-zinc-800 p-2.5">
         <form onSubmit={handleSubmit} className="flex items-end gap-1.5">
           <textarea
             value={prompt}
@@ -209,7 +247,7 @@ const AgentActivityPanel = ({ projectId }: Props) => {
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                submitPrompt(false);
+                submitPrompt();
               }
             }}
             placeholder="Ask the agent for changes…"

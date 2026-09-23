@@ -64,5 +64,14 @@ export interface ServerToClientEvents {
 
   "filetree:update": (fileTree: FileTree) => void;
   "agent:status":(event:AgentStatusEvent) => void
+
+  // Live file streaming — emitted by services/agent-status.ts
+  // (emitFileStreamStart/emitFileDelta/emitFileStreamEnd) but never
+  // added here, so tsc rejected the .emit() calls even though the
+  // events themselves were already real and already being emitted.
+  // Declarations only — no event name or payload changed.
+  "agent:file-stream-start": (data: { path: string }) => void;
+  "agent:file-delta": (data: { path: string; delta: string }) => void;
+  "agent:file-stream-end": (data: { path: string; content: string }) => void;
 }
 

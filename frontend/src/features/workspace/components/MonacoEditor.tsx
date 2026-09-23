@@ -13,6 +13,7 @@ import type {
 import { diffAddedLines } from "@/lib/lineDiff";
 
 const HIGHLIGHT_MS = 2500;
+const CHARS_PER_FRAME = 8; // ≈480 chars/sec at 60fps — typewriter pace, tune to taste
 
 type StreamState = {
   streaming: boolean;
@@ -108,7 +109,17 @@ const MonacoEditor = () => {
 
     if (!pending) return;
 
-    pendingDeltasRef.current.delete(currentFile);
+    // Drain at a fixed pace instead of dumping the whole buffer — network
+    // chunks arrive in uneven bursts, and applying them verbatim looked
+    // hasty/jerky rather than like a steady typewriter.
+    const chunk = pending.slice(0, CHARS_PER_FRAME);
+    const remainder = pending.slice(CHARS_PER_FRAME);
+
+    if (remainder) {
+      pendingDeltasRef.current.set(currentFile, remainder);
+    } else {
+      pendingDeltasRef.current.delete(currentFile);
+    }
 
     const model = editor.getModel();
 
@@ -125,14 +136,17 @@ const MonacoEditor = () => {
           lastLine,
           lastCol
         ),
-        text: pending,
+        text: chunk,
         forceMoveMarkers: true,
       },
     ]);
 
+    // Immediate, not Smooth — this runs every frame while tracking the tail,
+    // and re-triggering a Smooth scroll animation before the previous one
+    // finished is what caused the jittery/blinking feel.
     editor.revealLine(
       model.getLineCount(),
-      monacoInstance.editor.ScrollType.Smooth
+      monacoInstance.editor.ScrollType.Immediate
     );
   };
 
@@ -732,6 +746,11 @@ const MonacoEditor = () => {
           smoothScrolling: true,
 
           cursorSmoothCaretAnimation: "on",
+
+          // Suppresses transient red-squiggle error markers while the agent
+          // is mid-write — unbalanced brackets/quotes are expected during
+          // generation and were flashing on/off every frame.
+          renderValidationDecorations: isAgentWriting ? "off" : "editable",
 
           padding: {
             top: 16,

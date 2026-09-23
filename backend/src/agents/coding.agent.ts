@@ -111,6 +111,31 @@ function isAPIError(err: unknown): err is {
   );
 }
 
+/**
+ * A connection drop mid-request/mid-stream (ECONNRESET, ETIMEDOUT, undici's
+ * "terminated" abort, etc.) has no `status` field, so isAPIError() misses it
+ * entirely — without this check that error was thrown straight through with
+ * zero retries, unlike every other transient failure category here.
+ */
+function isTransientNetworkError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+
+  const codes = ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE", "ENOTFOUND"];
+
+  // undici often wraps the real socket error a couple of `cause` levels deep.
+  let current: unknown = err;
+  for (let i = 0; i < 5 && current; i++) {
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === "string" && codes.includes(code)) return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+
+  if (err.name === "TypeError" && err.message === "terminated") return true;
+  if (err.message.toLowerCase().includes("fetch failed")) return true;
+
+  return false;
+}
+
 // ─────────────────────────────────────────────────────────────
 // ANTHROPIC RESPONSE HELPERS
 // ─────────────────────────────────────────────────────────────
@@ -161,6 +186,20 @@ async function callModelWithRetry(
       return response;
     } catch (err) {
       lastError = err;
+
+      if (isTransientNetworkError(err)) {
+        if (attempt === MAX_TRANSIENT_RETRIES) break;
+
+        const backoff = BASE_BACKOFF_MS * (attempt + 1);
+
+        console.log(
+          `Network error (${(err as Error).message}) — retrying in ${backoff}ms ` +
+            `(${attempt + 1}/${MAX_TRANSIENT_RETRIES})`,
+        );
+
+        await sleep(backoff);
+        continue;
+      }
 
       if (!isAPIError(err)) {
         throw err;
@@ -303,6 +342,20 @@ async function callModelStreamWithRetry(
       return message;
     } catch (err) {
       lastError = err;
+
+      if (isTransientNetworkError(err)) {
+        if (attempt === MAX_TRANSIENT_RETRIES) break;
+
+        const backoff = BASE_BACKOFF_MS * (attempt + 1);
+
+        console.log(
+          `Network error (stream) (${(err as Error).message}) — retrying in ${backoff}ms ` +
+            `(${attempt + 1}/${MAX_TRANSIENT_RETRIES})`,
+        );
+
+        await sleep(backoff);
+        continue;
+      }
 
       if (!isAPIError(err)) {
         throw err;

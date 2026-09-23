@@ -168,6 +168,27 @@ export const codingWorkflow = inngest.createFunction(
     retries: 2,
     triggers: [{ event: "project/coding.requested" }],
 
+    // Installed SDK: inngest@4.16.0. This version defaults BOTH
+    // `checkpointing` and `optimizeParallelism` to `true` (confirmed in
+    // node_modules/inngest/components/InngestFunction.d.ts against the
+    // installed package, not assumed from docs). With optimizeParallelism
+    // on, the parallel generate-* steps inside Promise.all(batch.map(...))
+    // below get coalesced into fewer, longer-lived HTTP round-trips to the
+    // dev server instead of one round-trip per file. Disabling it ONLY for
+    // this function reverts to one request per generate-* step, so a
+    // dropped connection can cost at most one file's in-flight generation
+    // instead of a whole batch. This does NOT change Promise.all or
+    // per-file concurrency (optimizeParallelism only affects network
+    // batching of already-parallel steps — see Inngest's "step
+    // parallelism" docs).
+    //
+    // `checkpointing` is intentionally left at its default here — the
+    // SDK's own type doc already states "if your server dies before the
+    // checkpoint completes, step data will be lost and steps will be
+    // rerun" regardless of this setting, and disabling checkpointing
+    // entirely is a larger behavioral change than was verified/requested.
+    optimizeParallelism: false,
+
     onFailure: async ({ event, error }) => {
       const originalEvent = event.data.event as
         | { data?: { projectId?: string } }
@@ -177,11 +198,16 @@ export const codingWorkflow = inngest.createFunction(
     },
   },
 
-  async ({ event, step }) => {
+  async ({ event, step, runId, attempt }) => {
     const { projectId, prompt, setupContext, setupResult } = event.data;
 
     try {
     console.log(`Starting coding workflow for project ${projectId}`);
+    console.log(
+      `[coding-workflow] invocation — run=${runId} attempt=${attempt} project=${projectId} ` +
+        `(reprints on every Inngest replay/discovery request; does NOT mean steps re-executed — ` +
+        `see generate-* EXECUTING logs for that)`
+    );
     console.log("Setup context:", setupContext);
     console.log("Setup result:", setupResult);
 
@@ -248,22 +274,30 @@ export const codingWorkflow = inngest.createFunction(
       const batches = buildDependencyBatches(plan.files);
       const writtenContent: Record<string, string> = {};
 
-      console.log(`Generating ${plan.files.length} files across ${batches.length} batches`);
+      // NOTE: no top-level console.log here for "Generating N files
+      // across M batches" / "Batch X/Y" — those lines lived outside
+      // step.run() and therefore reprinted on every Inngest
+      // replay/discovery request as the run progressed, which looked
+      // like the batch loop was restarting from Batch 1 even when it
+      // wasn't. The per-file diagnostic below (inside step.run, so it
+      // only prints on genuine execution) is the reliable signal.
 
       for (let b = 0; b < batches.length; b++) {
         const batch = batches[b]!;
 
-        console.log(`Batch ${b + 1}/${batches.length}: ${batch.map((f) => f.path).join(", ")}`);
-
-        for (const file of batch) {
-          emitAgentStatus(projectId, "coding", "coding:generating", `Writing ${file.path}`, {
-            file: file.path,
-          });
-        }
-
         const results = await Promise.all(
           batch.map((file) =>
             step.run(`generate-${file.path}`, async () => {
+              console.log(
+                `[coding-workflow] generate-${file.path} EXECUTING — ` +
+                  `run=${runId} attempt=${attempt} batch=${b + 1}/${batches.length} ` +
+                  `(appearing more than once for the same run+file means this step genuinely re-ran)`
+              );
+
+              emitAgentStatus(projectId, "coding", "coding:generating", `Writing ${file.path}`, {
+                file: file.path,
+              });
+
               const dependencyContents: Record<string, string> = {};
               for (const dep of file.dependsOn) {
                 if (writtenContent[dep]) dependencyContents[dep] = writtenContent[dep];
@@ -293,16 +327,14 @@ export const codingWorkflow = inngest.createFunction(
 
               emitFileStreamEnd(projectId, file.path, content);
 
+              emitAgentStatus(projectId, "coding", "coding:generating", `${file.path} done`, {
+                file: file.path,
+              });
+
               return { path: file.path, content };
             })
           )
         );
-
-        for (const { path: filePath } of results) {
-          emitAgentStatus(projectId, "coding", "coding:generating", `${filePath} done`, {
-            file: filePath,
-          });
-        }
 
         for (const { path: filePath, content } of results) {
           writtenContent[filePath] = content;
@@ -320,9 +352,9 @@ export const codingWorkflow = inngest.createFunction(
       let lastError: string | null = null;
 
       for (let fixAttempt = 0; fixAttempt <= MAX_FIX_ATTEMPTS; fixAttempt++) {
-        emitAgentStatus(projectId, "coding", "coding:verifying", "Starting dev server and checking preview…");
-
         const verifyResult = await step.run(`verify-${fixAttempt}`, async () => {
+          emitAgentStatus(projectId, "coding", "coding:verifying", "Starting dev server and checking preview…");
+
           console.log("===== VERIFY: STARTING DEV SERVER =====");
           console.log(plan.verifyCommand);
           console.log("========================================");
@@ -376,12 +408,12 @@ export const codingWorkflow = inngest.createFunction(
 
         const targetFile = plan.files.find((f) => f.path === targetPath)!;
 
-        emitAgentStatus(projectId, "coding", "coding:fixing", `Fixing ${targetPath}`, {
-          file: targetPath,
-          attempt: fixAttempt + 1,
-        });
-
         const fixedContent = await step.run(`fix-${fixAttempt}-${targetPath}`, async () => {
+          emitAgentStatus(projectId, "coding", "coding:fixing", `Fixing ${targetPath}`, {
+            file: targetPath,
+            attempt: fixAttempt + 1,
+          });
+
           emitFileStreamStart(projectId, targetPath);
 
           const content = await fixFile({
