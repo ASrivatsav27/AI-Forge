@@ -73,5 +73,9 @@ export interface ServerToClientEvents {
   "agent:file-stream-start": (data: { path: string }) => void;
   "agent:file-delta": (data: { path: string; delta: string }) => void;
   "agent:file-stream-end": (data: { path: string; content: string }) => void;
+
+  // Chat reply for triage "chat" mode — see services/agent-status.ts
+  // emitAgentMessage(). No file/path payload; just the answer text.
+  "agent:message": (data: { message: string; timestamp: number }) => void;
 }
 

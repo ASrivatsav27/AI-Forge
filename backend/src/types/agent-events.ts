@@ -8,6 +8,7 @@ export type AgentPhase =
   | "setup:verifying"
   | "setup:done"
   | "coding:planning"
+  | "coding:triage"
   | "coding:setup-command"
   | "coding:generating"
   | "coding:verifying"
@@ -38,4 +39,9 @@ export type FileDeltaEvent = {
 export type FileStreamEndEvent = {
   path: string;
   content: string;
+};
+
+export type AgentMessageEvent = {
+  message: string;
+  timestamp: number;
 };

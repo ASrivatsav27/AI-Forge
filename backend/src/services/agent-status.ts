@@ -35,3 +35,16 @@ export function emitFileDelta(projectId: string, path: string, delta: string) {
 export function emitFileStreamEnd(projectId: string, path: string, content: string) {
   getIO().to(projectId).emit("agent:file-stream-end", { path, content });
 }
+
+// ─────────────────────────────────────────────────────────────
+// CHAT REPLY — for triage "chat" mode: no files change, the model
+// just answers directly. Separate channel from agent:status since
+// this carries the actual answer text, not a progress label.
+// ─────────────────────────────────────────────────────────────
+
+export function emitAgentMessage(projectId: string, message: string) {
+  getIO().to(projectId).emit("agent:message", {
+    message,
+    timestamp: Date.now(),
+  });
+}

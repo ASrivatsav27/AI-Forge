@@ -55,7 +55,12 @@ export async function deleteProject(projectId:string) {
 
 
 
-export async function sendFollowUpPrompt(projectId: string, prompt: string, force?: boolean) {
-    const response = await api.post(`/${projectId}/prompt`, { prompt, force })
+export async function sendFollowUpPrompt(
+    projectId: string,
+    prompt: string,
+    force?: boolean,
+    image?: { mediaType: string; data: string },
+) {
+    const response = await api.post(`/${projectId}/prompt`, { prompt, force, image })
     return response.data
 }

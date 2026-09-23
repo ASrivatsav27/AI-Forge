@@ -489,6 +489,7 @@ export const setupWorkflow = inngest.createFunction(
         projectId,
         prompt,
         setupContext,
+        isFollowUp: false,
 
         setupResult: {
           previewReady: result.previewReady,

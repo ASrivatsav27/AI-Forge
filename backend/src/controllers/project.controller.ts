@@ -99,13 +99,29 @@ export async function createProjectController(req: Request, res: Response) {
 
 export async function sendFollowUpPromptController(req: Request<ProjectParams>, res: Response) {
     const { projectId } = req.params;
-    const { prompt } = req.body;
+    const { prompt, image } = req.body;
     const userId = req.user.id;
 
     if (!prompt?.trim()) {
         return res.status(400).json({
             message: "enter a prompt",
         });
+    }
+
+    if (image !== undefined) {
+        const validMediaTypes = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+        if (
+            typeof image !== "object" ||
+            image === null ||
+            typeof image.data !== "string" ||
+            !image.data.trim() ||
+            !validMediaTypes.includes(image.mediaType)
+        ) {
+            return res.status(400).json({
+                message: "Invalid image attachment.",
+            });
+        }
     }
 
     const project = await prisma.project.findFirst({
@@ -131,6 +147,8 @@ export async function sendFollowUpPromptController(req: Request<ProjectParams>, 
         codingRequested.create({
             projectId,
             prompt,
+            isFollowUp: true,
+            ...(image ? { image } : {}),
             setupContext: {
                 framework: "",
             },

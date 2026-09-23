@@ -10,6 +10,17 @@ export type SetupContext = {
   setupPrompt?: string;
 };
 
+/**
+ * A reference image attached to a follow-up prompt (design mockup,
+ * screenshot of a bug, UI to match, etc). Only ever populated for
+ * follow-ups — the initial build never has one.
+ */
+export type ImageInput = {
+  mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+  /** Raw base64, no "data:...;base64," prefix. */
+  data: string;
+};
+
 export type SetupRequestedData = {
   projectId: string;
   /** The user's application requirements. Passed unchanged to both workflows.
@@ -31,6 +42,17 @@ export type CodingRequestedData = {
   projectId: string;
   prompt: string;
   setupContext: SetupContext;
+  /**
+   * true only for chat/prompt-box follow-ups sent after the project
+   * already has a verified initial build (sendFollowUpPromptController).
+   * false for the initial build handed off from setup.workflow.ts, where
+   * there's nothing built yet for "chat"/"quick-edit" to apply to — that
+   * path always goes straight to full planning.
+   */
+  isFollowUp: boolean;
+  /** Reference image attached to a follow-up prompt, if any. Never set on
+   *  the initial build's handoff event. */
+  image?: ImageInput;
   setupResult: {
     previewReady: boolean;
     hostPort?: string;

@@ -3,6 +3,7 @@ import {
   planProject,
   generateFileContent,
   fixFile,
+  triageRequest,
   buildDependencyBatches,
   extractErrorFilePath,
   extractMissingPackage,
@@ -28,7 +29,13 @@ import fs from "fs/promises";
 import path from "path";
 
 import type { ProjectSession } from "../types/session.js";
-import { emitAgentStatus, emitFileStreamStart, emitFileDelta, emitFileStreamEnd } from "../services/agent-status.js";
+import {
+  emitAgentStatus,
+  emitFileStreamStart,
+  emitFileDelta,
+  emitFileStreamEnd,
+  emitAgentMessage,
+} from "../services/agent-status.js";
 
 // ============================================================
 // CONFIG
@@ -111,7 +118,7 @@ async function getCodingSession(projectId: string): Promise<ProjectSession> {
 }
 
 // ============================================================
-// PREVIEW WAIT — drains events until a TERMINAL one arrives.
+// PREVIEW WAIT
 // ============================================================
 
 async function waitForPreviewOutcome(
@@ -121,12 +128,8 @@ async function waitForPreviewOutcome(
     const evt = await nextEvent(session);
     console.log("Verify — intermediate event:", summarizeRuntimeEvent(evt));
 
-    if (evt.kind === "previewReady") {
-      return { ready: true };
-    }
-    if (evt.kind === "previewError") {
-      return { ready: false, reason: evt.reason };
-    }
+    if (evt.kind === "previewReady") return { ready: true };
+    if (evt.kind === "previewError") return { ready: false, reason: evt.reason };
     if (evt.kind === "previewStopped") {
       return { ready: false, reason: "Dev server stopped unexpectedly before becoming ready." };
     }
@@ -139,26 +142,22 @@ async function waitForPreviewOutcome(
 }
 
 // ============================================================
-// STOP ACTIVE COMMAND — drains until commandCompleted specifically.
+// STOP ACTIVE COMMAND
 // ============================================================
 
 async function stopActiveCommandAndDrain(session: ProjectSession): Promise<void> {
   session.stopRequested = true;
-
   sendInput(session, "\u0003");
 
   for (let i = 0; i < MAX_STOP_DRAIN_EVENTS; i++) {
     const evt = await nextEvent(session);
     console.log("Stop drain — event:", summarizeRuntimeEvent(evt));
-
-    if (evt.kind === "commandCompleted") {
-      return;
-    }
+    if (evt.kind === "commandCompleted") return;
   }
 
   console.log(
     `WARNING: no commandCompleted observed after ${MAX_STOP_DRAIN_EVENTS} drained events following Ctrl+C. ` +
-      `Proceeding anyway — the next executeCommand call may throw if bookkeeping wasn't cleaned up.`,
+      `Proceeding anyway.`,
   );
 }
 
@@ -167,71 +166,206 @@ export const codingWorkflow = inngest.createFunction(
     id: "coding-workflow",
     retries: 2,
     triggers: [{ event: "project/coding.requested" }],
-
-    // Installed SDK: inngest@4.16.0. This version defaults BOTH
-    // `checkpointing` and `optimizeParallelism` to `true` (confirmed in
-    // node_modules/inngest/components/InngestFunction.d.ts against the
-    // installed package, not assumed from docs). With optimizeParallelism
-    // on, the parallel generate-* steps inside Promise.all(batch.map(...))
-    // below get coalesced into fewer, longer-lived HTTP round-trips to the
-    // dev server instead of one round-trip per file. Disabling it ONLY for
-    // this function reverts to one request per generate-* step, so a
-    // dropped connection can cost at most one file's in-flight generation
-    // instead of a whole batch. This does NOT change Promise.all or
-    // per-file concurrency (optimizeParallelism only affects network
-    // batching of already-parallel steps — see Inngest's "step
-    // parallelism" docs).
-    //
-    // `checkpointing` is intentionally left at its default here — the
-    // SDK's own type doc already states "if your server dies before the
-    // checkpoint completes, step data will be lost and steps will be
-    // rerun" regardless of this setting, and disabling checkpointing
-    // entirely is a larger behavioral change than was verified/requested.
     optimizeParallelism: false,
-
     onFailure: async ({ event, error }) => {
-      const originalEvent = event.data.event as
-        | { data?: { projectId?: string } }
-        | undefined;
+      const originalEvent = event.data.event as { data?: { projectId?: string } } | undefined;
       const projectId = originalEvent?.data?.projectId;
       console.error("Coding workflow failed:", projectId, error);
     },
   },
 
   async ({ event, step, runId, attempt }) => {
-    const { projectId, prompt, setupContext, setupResult } = event.data;
+    const { projectId, prompt, setupContext, setupResult, isFollowUp, image } = event.data;
 
     try {
-    console.log(`Starting coding workflow for project ${projectId}`);
-    console.log(
-      `[coding-workflow] invocation — run=${runId} attempt=${attempt} project=${projectId} ` +
-        `(reprints on every Inngest replay/discovery request; does NOT mean steps re-executed — ` +
-        `see generate-* EXECUTING logs for that)`
-    );
-    console.log("Setup context:", setupContext);
-    console.log("Setup result:", setupResult);
+      console.log(`Starting coding workflow for project ${projectId}`);
+      console.log(`[coding-workflow] run=${runId} attempt=${attempt} project=${projectId}`);
+      console.log("Setup context:", setupContext);
+      console.log("Setup result:", setupResult);
 
-    const session = await getCodingSession(projectId);
-    const setupOutput = JSON.stringify(setupResult, null, 2);
+      const session = await getCodingSession(projectId);
+      const setupOutput = JSON.stringify(setupResult, null, 2);
 
-    await step.run("stop-setup-dev-server", async () => {
-      if (session.preview.state === "READY") {
-        console.log("Dev server from Setup Agent is running — stopping it before coding begins.");
-        await stopActiveCommandAndDrain(session);
-        return "Dev server was stopped before coding began.";
+      await step.run("stop-setup-dev-server", async () => {
+        if (session.preview.state === "READY") {
+          console.log("Dev server from Setup Agent is running — stopping it before coding begins.");
+          await stopActiveCommandAndDrain(session);
+          return "Dev server was stopped before coding began.";
+        }
+        return "No dev server was running at handoff.";
+      });
+
+      // ====================================================
+      // WORKSPACE LISTING
+      // ====================================================
+
+      const workspaceListing = await step.run("list-workspace", async () => {
+        emitAgentStatus(projectId, "coding", "coding:planning", "Analyzing your request…");
+        return listWorkspaceFiles(session.workspacePath, ".");
+      });
+
+      // ====================================================
+      // PHASE 0: TRIAGE (follow-ups only)
+      // ====================================================
+
+      if (isFollowUp) {
+        const triage = await step.run("triage", async () => {
+          const result = await triageRequest({
+            projectId,
+            userPrompt: prompt,
+            setupContext,
+            workspaceListing,
+            image,
+          });
+
+          emitAgentStatus(projectId, "coding", "coding:triage", `${result.mode} — ${result.reason}`);
+
+          return result;
+        });
+
+        // ── chat: pure text reply, no action ──────────────
+        if (triage.mode === "chat") {
+          await step.run("send-chat-reply", async () => {
+            emitAgentMessage(projectId, triage.reply!);
+            emitAgentStatus(projectId, "coding", "coding:done", "Answered.");
+          });
+
+          return {
+            success: true,
+            reason: triage.reply!,
+            previewReady: session.preview.state === "READY",
+            hostPort: session.preview.hostPort,
+          };
+        }
+
+        // ── run-command: start/restart the dev server ──────
+        if (triage.mode === "run-command") {
+          const runResult = await step.run("run-command", async () => {
+            emitAgentStatus(
+              projectId,
+              "coding",
+              "coding:verifying",
+              "Starting dev server…",
+            );
+
+            // Stop any existing server first.
+            if (session.preview.state === "READY") {
+              console.log("Server already running — stopping before restart.");
+              await stopActiveCommandAndDrain(session);
+            }
+
+            console.log("===== RUN COMMAND =====");
+            console.log(triage.verifyCommand!);
+            console.log("=======================");
+
+            executeCommand(session, triage.verifyCommand!);
+            return waitForPreviewOutcome(session);
+          });
+
+          if (runResult.ready) {
+            await step.run("run-command-done", async () => {
+              emitAgentStatus(projectId, "coding", "coding:done", "Preview is live.");
+            });
+
+            return {
+              success: true,
+              reason: "Dev server started and preview verified.",
+              previewReady: true,
+              hostPort: session.preview.hostPort,
+            };
+          }
+
+          // Server failed to start — fall through to full planning
+          // so the Coding Agent can diagnose and fix whatever is broken.
+          console.log(
+            `run-command verify failed: ${runResult.reason}. Falling back to full planning.`,
+          );
+
+          emitAgentStatus(
+            projectId,
+            "coding",
+            "coding:planning",
+            "Server didn't start — replanning to diagnose and fix…",
+          );
+        }
+
+        // ── quick-edit: patch one file then verify ─────────
+        if (triage.mode === "quick-edit") {
+          const targetPath = triage.targetFile!;
+
+          await step.run(`quick-edit-${targetPath}`, async () => {
+            emitAgentStatus(projectId, "coding", "coding:generating", `Editing ${targetPath}`, {
+              file: targetPath,
+            });
+
+            const existingContent = await readWorkspaceFile(session.workspacePath, targetPath);
+
+            emitFileStreamStart(projectId, targetPath);
+
+            const content = await generateFileContent({
+              file: { path: targetPath, action: "modify", description: prompt, dependsOn: [] },
+              userPrompt: prompt,
+              setupContext,
+              dependencyContents: {},
+              existingContent,
+              image,
+              onDelta: (delta) => emitFileDelta(projectId, targetPath, delta),
+            });
+
+            await writeWorkspaceFile(session.workspacePath, targetPath, content);
+            emitFileStreamEnd(projectId, targetPath, content);
+            return content;
+          });
+
+          if (triage.verifyCommand) {
+            if (session.preview.state === "READY") {
+              await step.run("stop-before-quick-verify", () => stopActiveCommandAndDrain(session));
+            }
+
+            const quickVerify = await step.run("verify-quick-edit", async () => {
+              emitAgentStatus(projectId, "coding", "coding:verifying", "Starting dev server and checking preview…");
+              executeCommand(session, triage.verifyCommand!);
+              return waitForPreviewOutcome(session);
+            });
+
+            if (quickVerify.ready) {
+              await step.run("send-quick-edit-done", async () => {
+                emitAgentStatus(projectId, "coding", "coding:done", "Preview is live.");
+              });
+
+              return {
+                success: true,
+                reason: `Quick-edited ${targetPath} and verified the preview.`,
+                previewReady: true,
+                hostPort: session.preview.hostPort,
+              };
+            }
+
+            console.log(
+              `Quick-edit verify failed for ${targetPath}: ${quickVerify.reason}. Falling back to full planning.`,
+            );
+
+            await step.run("stop-after-quick-verify-fail", () => stopActiveCommandAndDrain(session));
+          } else {
+            console.log(
+              `Triage returned quick-edit for ${targetPath} with no verifyCommand — falling back to full planning.`,
+            );
+          }
+
+          emitAgentStatus(
+            projectId,
+            "coding",
+            "coding:planning",
+            "Quick edit needs a full rebuild to verify — replanning…",
+          );
+        }
+
+        // "full" falls straight through to full planning below.
       }
-      return "No dev server was running at handoff.";
-    });
 
       // ====================================================
       // PHASE 1: PLAN
       // ====================================================
-
-      const workspaceListing = await step.run("list-workspace", () =>
-        listWorkspaceFiles(session.workspacePath, ".")
-      );
-
-      emitAgentStatus(projectId, "coding", "coding:planning", "Analyzing your request…");
 
       const plan: ExecutionPlan = await step.run("plan", () =>
         planProject({
@@ -240,11 +374,11 @@ export const codingWorkflow = inngest.createFunction(
           setupContext,
           setupOutput,
           workspaceListing,
-        })
+          ...(isFollowUp && image ? { image } : {}),
+        }),
       );
 
       emitAgentStatus(projectId, "coding", "coding:planning", `Plan ready — ${plan.files.length} files`);
-
       console.log(`Plan produced ${plan.files.length} files, ${plan.setupCommands.length} setup commands`);
 
       // ====================================================
@@ -253,7 +387,6 @@ export const codingWorkflow = inngest.createFunction(
 
       for (let i = 0; i < plan.setupCommands.length; i++) {
         const command = plan.setupCommands[i]!;
-
         emitAgentStatus(projectId, "coding", "coding:setup-command", command);
 
         await step.run(`setup-command-${i}`, async () => {
@@ -274,14 +407,6 @@ export const codingWorkflow = inngest.createFunction(
       const batches = buildDependencyBatches(plan.files);
       const writtenContent: Record<string, string> = {};
 
-      // NOTE: no top-level console.log here for "Generating N files
-      // across M batches" / "Batch X/Y" — those lines lived outside
-      // step.run() and therefore reprinted on every Inngest
-      // replay/discovery request as the run progressed, which looked
-      // like the batch loop was restarting from Batch 1 even when it
-      // wasn't. The per-file diagnostic below (inside step.run, so it
-      // only prints on genuine execution) is the reliable signal.
-
       for (let b = 0; b < batches.length; b++) {
         const batch = batches[b]!;
 
@@ -289,14 +414,10 @@ export const codingWorkflow = inngest.createFunction(
           batch.map((file) =>
             step.run(`generate-${file.path}`, async () => {
               console.log(
-                `[coding-workflow] generate-${file.path} EXECUTING — ` +
-                  `run=${runId} attempt=${attempt} batch=${b + 1}/${batches.length} ` +
-                  `(appearing more than once for the same run+file means this step genuinely re-ran)`
+                `[coding-workflow] generate-${file.path} EXECUTING — run=${runId} attempt=${attempt} batch=${b + 1}/${batches.length}`,
               );
 
-              emitAgentStatus(projectId, "coding", "coding:generating", `Writing ${file.path}`, {
-                file: file.path,
-              });
+              emitAgentStatus(projectId, "coding", "coding:generating", `Writing ${file.path}`, { file: file.path });
 
               const dependencyContents: Record<string, string> = {};
               for (const dep of file.dependsOn) {
@@ -320,20 +441,17 @@ export const codingWorkflow = inngest.createFunction(
                 setupContext,
                 dependencyContents,
                 ...(existingContent !== undefined ? { existingContent } : {}),
+                ...(isFollowUp && image ? { image } : {}),
                 onDelta: (delta) => emitFileDelta(projectId, file.path, delta),
               });
 
               await writeWorkspaceFile(session.workspacePath, file.path, content);
-
               emitFileStreamEnd(projectId, file.path, content);
-
-              emitAgentStatus(projectId, "coding", "coding:generating", `${file.path} done`, {
-                file: file.path,
-              });
+              emitAgentStatus(projectId, "coding", "coding:generating", `${file.path} done`, { file: file.path });
 
               return { path: file.path, content };
-            })
-          )
+            }),
+          ),
         );
 
         for (const { path: filePath, content } of results) {
@@ -342,10 +460,7 @@ export const codingWorkflow = inngest.createFunction(
       }
 
       // ====================================================
-      // PHASE 4: VERIFY — start dev server, drain events until
-      // a terminal outcome. On failure: check for a missing
-      // package first, otherwise patch the file NAMED IN THE
-      // LOG, not just whichever file was written last.
+      // PHASE 4: VERIFY
       // ====================================================
 
       let previewReady = false;
@@ -379,8 +494,7 @@ export const codingWorkflow = inngest.createFunction(
         const missingPackage = extractMissingPackage(lastError);
 
         if (missingPackage) {
-          console.log(`Detected missing package: ${missingPackage} — installing instead of patching a file.`);
-
+          console.log(`Detected missing package: ${missingPackage} — installing.`);
           emitAgentStatus(projectId, "coding", "coding:installing", `Installing ${missingPackage}…`);
 
           await step.run(`install-missing-${fixAttempt}-${missingPackage}`, async () => {
@@ -422,10 +536,9 @@ export const codingWorkflow = inngest.createFunction(
             buildError: lastError!,
             onDelta: (delta) => emitFileDelta(projectId, targetPath, delta),
           });
+
           await writeWorkspaceFile(session.workspacePath, targetPath, content);
-
           emitFileStreamEnd(projectId, targetPath, content);
-
           return content;
         });
 
@@ -436,7 +549,7 @@ export const codingWorkflow = inngest.createFunction(
 
       if (!previewReady) {
         throw new Error(
-          `Coding workflow finished generating files but could not verify a working preview after ${MAX_FIX_ATTEMPTS} fix attempts. Last error: ${lastError}`
+          `Coding workflow finished generating files but could not verify a working preview after ${MAX_FIX_ATTEMPTS} fix attempts. Last error: ${lastError}`,
         );
       }
 
@@ -461,11 +574,11 @@ export const codingWorkflow = inngest.createFunction(
 
       if (err instanceof DailyTokenLimitError) {
         console.error(
-          `Daily token limit hit for project ${projectId}. ` +
-            `Retry after ~${err.retryAfterSeconds ?? "unknown"}s. Consider switching providers.`
+          `Daily token limit hit for project ${projectId}. Retry after ~${err.retryAfterSeconds ?? "unknown"}s.`,
         );
       }
+
       throw err;
     }
-  }
+  },
 );

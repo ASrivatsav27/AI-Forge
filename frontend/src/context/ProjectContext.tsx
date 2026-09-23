@@ -14,6 +14,7 @@ import type {
     FileDeltaEvent,
     FileStreamEndEvent,
     AgentStatusEvent,
+    AgentMessageEvent,
 } from "@/types/agent.types";
 
 import { createContext, useState, useEffect, useRef, type ReactNode } from "react";
@@ -33,6 +34,15 @@ type FileGenerationState = {
     status: "generating" | "done";
     content: string;
     startedAt: number;
+};
+
+export type ChatMessage = {
+    id: string;
+    role: "user" | "agent" | "system";
+    text: string;
+    timestamp: number;
+    /** True while waiting for a chat-mode reply that hasn't arrived yet. */
+    pending?: boolean;
 };
 
 type ProjectContextType = {
@@ -65,6 +75,11 @@ type ProjectContextType = {
 
     /** Total files in the current run's plan. */
     planTotalFiles: number | null;
+
+    /** Chat-style conversation log: the user's prompts and the agent's
+     *  chat-only replies (triage "chat" mode). File-generation runs don't
+     *  add entries here — those show in the live-generation panel instead. */
+    chatMessages: ChatMessage[];
 };
 
 export const ProjectContext = createContext<ProjectContextType | null>(null);
@@ -89,6 +104,8 @@ export function ProjectProvider({ children }: ProjectProps) {
     >({});
 
     const [planTotalFiles, setPlanTotalFiles] = useState<number | null>(null);
+
+    const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
     /*
      * Authoritative, synchronous record of which files are CURRENTLY
@@ -279,6 +296,49 @@ export function ProjectProvider({ children }: ProjectProps) {
     // live-generation state only when a genuinely NEW plan arrives.
     useEffect(() => {
         const handleAgentStatus = (evt: AgentStatusEvent) => {
+            if (evt.phase === "coding:triage") {
+                // Post the decision as a permanent marker in the chat log (not
+                // just the transient status line) so it stays visible once
+                // the panel moves on to "Building your app…"/live-gen.
+                //
+                // The backend can re-emit this exact status on an Inngest
+                // replay of the same run (see coding.worflow.ts) — guard
+                // against appending an identical duplicate right after the
+                // one already there.
+                setChatMessages((prev) => {
+                    const last = prev[prev.length - 1];
+
+                    if (last?.role === "system" && last.text === evt.message) {
+                        return prev;
+                    }
+
+                    return [
+                        ...prev,
+                        {
+                            id: `sys-${evt.timestamp}-${Math.random().toString(36).slice(2)}`,
+                            role: "system",
+                            text: evt.message,
+                            timestamp: evt.timestamp,
+                        },
+                    ];
+                });
+
+                // Only "chat" mode ever produces an agent:message reply — for
+                // quick-edit/full, nothing is coming to replace the "thinking"
+                // placeholder, so clear it now.
+                if (!evt.message.startsWith("chat —")) {
+                    setChatMessages((prev) => prev.filter((m) => m.id !== "pending-agent-reply"));
+                }
+
+                return;
+            }
+
+            if (evt.phase === "error") {
+                // Don't leave "thinking" spinning forever if triage itself
+                // (or anything before it decided) throws.
+                setChatMessages((prev) => prev.filter((m) => m.id !== "pending-agent-reply"));
+            }
+
             if (evt.phase !== "coding:planning") {
                 return;
             }
@@ -332,6 +392,29 @@ export function ProjectProvider({ children }: ProjectProps) {
 
         return () => {
             socket.off("agent:status", handleAgentStatus);
+        };
+    }, []);
+
+    // Chat-only replies from the agent (triage "chat" mode) arrive on
+    // their own channel, separate from agent:status/file-stream events.
+    useEffect(() => {
+        const handleAgentMessage = (evt: AgentMessageEvent) => {
+            setChatMessages((prev) => [
+                // Drop the "thinking" placeholder now that the real reply is in.
+                ...prev.filter((m) => m.id !== "pending-agent-reply"),
+                {
+                    id: `agent-${evt.timestamp}-${Math.random().toString(36).slice(2)}`,
+                    role: "agent",
+                    text: evt.message,
+                    timestamp: evt.timestamp,
+                },
+            ]);
+        };
+
+        socket.on("agent:message", handleAgentMessage);
+
+        return () => {
+            socket.off("agent:message", handleAgentMessage);
         };
     }, []);
 
@@ -424,11 +507,29 @@ export function ProjectProvider({ children }: ProjectProps) {
     const handleSendFollowUpPrompt = async (
         payload: SendFollowUpPromptPayload
     ): Promise<FollowUpPromptResult> => {
+        setChatMessages((prev) => [
+            ...prev,
+            {
+                id: `user-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                role: "user",
+                text: payload.prompt,
+                timestamp: Date.now(),
+            },
+            {
+                id: "pending-agent-reply",
+                role: "agent",
+                text: "",
+                timestamp: Date.now(),
+                pending: true,
+            },
+        ]);
+
         try {
             await sendFollowUpPrompt(
                 payload.projectId,
                 payload.prompt,
-                payload.force
+                payload.force,
+                payload.image
             );
 
             return {
@@ -465,6 +566,7 @@ export function ProjectProvider({ children }: ProjectProps) {
                 fileActivity,
                 fileGenState,
                 planTotalFiles,
+                chatMessages,
                 selectedFile,
                 setSelectedFile,
                 loading,

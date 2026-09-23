@@ -19,10 +19,17 @@ export type createProjectPayload = {
 };
 
 
+export type ImageAttachment = {
+    mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+    /** Raw base64, no "data:...;base64," prefix. */
+    data: string;
+};
+
 export type SendFollowUpPromptPayload = {
     projectId: string;
     prompt: string;
     force?: boolean;
+    image?: ImageAttachment;
 };
 
 export type FollowUpPromptResult = {
