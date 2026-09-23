@@ -45,12 +45,18 @@ export type GenerateFileRequest = {
 
   /** If action is "modify", the file's current content. */
   existingContent?: string;
+
+  /** Called with each text chunk as the model streams the file content. */
+  onDelta?: (delta: string) => void;
 };
 
 export type FixFileRequest = {
   file: FilePlan;
   currentContent: string;
   buildError: string;
+
+  /** Called with each text chunk as the model streams the corrected content. */
+  onDelta?: (delta: string) => void;
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -268,8 +274,110 @@ async function callModelWithRetry(
 }
 
 // ─────────────────────────────────────────────────────────────
-// JSON EXTRACTION HELPERS
+// STREAMING MODEL CALL WITH RETRIES
+// (same transient-error handling as callModelWithRetry, but
+//  surfaces text chunks as they arrive via onDelta)
 // ─────────────────────────────────────────────────────────────
+
+async function callModelStreamWithRetry(
+  client: Anthropic,
+  params: Anthropic.MessageCreateParamsNonStreaming,
+  onDelta?: (delta: string) => void,
+): Promise<Anthropic.Message> {
+  let lastError: unknown;
+
+  for (
+    let attempt = 0;
+    attempt <= MAX_TRANSIENT_RETRIES;
+    attempt++
+  ) {
+    try {
+      const stream = client.messages.stream(params);
+
+      if (onDelta) {
+        stream.on("text", (delta) => onDelta(delta));
+      }
+
+      const message = await stream.finalMessage();
+
+      return message;
+    } catch (err) {
+      lastError = err;
+
+      if (!isAPIError(err)) {
+        throw err;
+      }
+
+      const status = err.status;
+      const errorMessage =
+        err.error?.message ??
+        err.message ??
+        "Unknown API error";
+
+      if (
+        status === 429 &&
+        errorMessage.toLowerCase().includes("tokens per day")
+      ) {
+        const retryAfterHeader =
+          err.headers?.get?.("retry-after");
+
+        const retryAfterSeconds = retryAfterHeader
+          ? Number(retryAfterHeader)
+          : undefined;
+
+        throw new DailyTokenLimitError(
+          errorMessage,
+          retryAfterSeconds,
+        );
+      }
+
+      if (status === 429) {
+        if (attempt === MAX_TRANSIENT_RETRIES) break;
+
+        const retryAfterHeader =
+          err.headers?.get?.("retry-after");
+
+        const waitSeconds = retryAfterHeader
+          ? Number(retryAfterHeader)
+          : (attempt + 1) * 5;
+
+        console.log(
+          `Rate limited (stream) — waiting ${waitSeconds}s before retry ${
+            attempt + 1
+          }/${MAX_TRANSIENT_RETRIES}`,
+        );
+
+        await sleep(waitSeconds * 1000);
+        continue;
+      }
+
+      if (status === 400 && err.error?.code === "tool_use_failed") {
+        if (attempt === MAX_TRANSIENT_RETRIES) break;
+
+        await sleep(BASE_BACKOFF_MS * (attempt + 1));
+        continue;
+      }
+
+      if (status >= 500) {
+        if (attempt === MAX_TRANSIENT_RETRIES) break;
+
+        const backoff = BASE_BACKOFF_MS * (attempt + 1);
+
+        console.log(
+          `Upstream ${status} (stream) — retrying in ${backoff}ms ` +
+            `(${attempt + 1}/${MAX_TRANSIENT_RETRIES})`,
+        );
+
+        await sleep(backoff);
+        continue;
+      }
+
+      throw err;
+    }
+  }
+
+  throw lastError;
+}
 
 /**
  * Strips ```json / ```typescript / ```tsx etc.
@@ -659,7 +767,7 @@ Just the file content.
   );
 
   const response =
-    await callModelWithRetry(
+    await callModelStreamWithRetry(
       claude,
       {
         model: MODEL,
@@ -673,6 +781,7 @@ Just the file content.
           },
         ],
       },
+      req.onDelta,
     );
 
   const text =
@@ -758,7 +867,7 @@ No explanation.
   );
 
   const response =
-    await callModelWithRetry(
+    await callModelStreamWithRetry(
       claude,
       {
         model: MODEL,
@@ -772,6 +881,7 @@ No explanation.
           },
         ],
       },
+      req.onDelta,
     );
 
   const text =

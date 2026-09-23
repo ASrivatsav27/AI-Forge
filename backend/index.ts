@@ -76,8 +76,12 @@ io.on("connection", (socket: Socket) => {
 
   const filePath = path.join(session.workspacePath, relativePath);
 
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, content);
+  try {
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, content);
+  } catch (err) {
+    console.error(`file:create failed for ${relativePath}:`, err);
+  }
 });
 
 socket.on("folder:create", async ({ relativePath }) => {
@@ -86,7 +90,11 @@ socket.on("folder:create", async ({ relativePath }) => {
 
   const folderPath = path.join(session.workspacePath, relativePath);
 
-  await fs.mkdir(folderPath, { recursive: true });
+  try {
+    await fs.mkdir(folderPath, { recursive: true });
+  } catch (err) {
+    console.error(`folder:create failed for ${relativePath}:`, err);
+  }
 });
 
 socket.on("fs:delete", async ({ relativePath }) => {
@@ -95,15 +103,20 @@ socket.on("fs:delete", async ({ relativePath }) => {
 
   const targetPath = path.join(session.workspacePath, relativePath);
 
-  const stats = await fs.stat(targetPath);
+  try {
+    const stats = await fs.stat(targetPath);
 
-  if (stats.isDirectory()) {
-    await fs.rm(targetPath, {
-      recursive: true,
-      force: true,
-    });
-  } else {
-    await fs.unlink(targetPath);
+    if (stats.isDirectory()) {
+      await fs.rm(targetPath, {
+        recursive: true,
+        force: true,
+      });
+    } else {
+      await fs.unlink(targetPath);
+    }
+  } catch (err: any) {
+    if (err?.code === "ENOENT") return; // already gone — fine
+    console.error(`fs:delete failed for ${relativePath}:`, err);
   }
 });
   
@@ -114,12 +127,26 @@ socket.on("fs:delete", async ({ relativePath }) => {
 
   const filePath = path.join(session.workspacePath, relativePath);
 
-  const content = await fs.readFile(filePath, "utf8");
+  try {
+    const content = await fs.readFile(filePath, "utf8");
 
-  socket.emit("file:content", {
-    relativePath,
-    content,
-  });
+    socket.emit("file:content", {
+      relativePath,
+      content,
+    });
+  } catch (err: any) {
+    if (err?.code === "ENOENT") {
+      // File doesn't exist yet — e.g. the agent hasn't written a newly
+      // created file to disk yet. Not an error, just nothing to show.
+      socket.emit("file:content", {
+        relativePath,
+        content: "",
+      });
+      return;
+    }
+
+    console.error(`file:read failed for ${relativePath}:`, err);
+  }
 });
 
 

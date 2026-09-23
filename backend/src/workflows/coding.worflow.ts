@@ -28,7 +28,7 @@ import fs from "fs/promises";
 import path from "path";
 
 import type { ProjectSession } from "../types/session.js";
-import { emitAgentStatus } from "../services/agent-status.js";
+import { emitAgentStatus, emitFileStreamStart, emitFileDelta, emitFileStreamEnd } from "../services/agent-status.js";
 
 // ============================================================
 // CONFIG
@@ -162,10 +162,6 @@ async function stopActiveCommandAndDrain(session: ProjectSession): Promise<void>
   );
 }
 
-// ============================================================
-// CODING WORKFLOW
-// ============================================================
-
 export const codingWorkflow = inngest.createFunction(
   {
     id: "coding-workflow",
@@ -184,6 +180,7 @@ export const codingWorkflow = inngest.createFunction(
   async ({ event, step }) => {
     const { projectId, prompt, setupContext, setupResult } = event.data;
 
+    try {
     console.log(`Starting coding workflow for project ${projectId}`);
     console.log("Setup context:", setupContext);
     console.log("Setup result:", setupResult);
@@ -200,7 +197,6 @@ export const codingWorkflow = inngest.createFunction(
       return "No dev server was running at handoff.";
     });
 
-    try {
       // ====================================================
       // PHASE 1: PLAN
       // ====================================================
@@ -282,15 +278,20 @@ export const codingWorkflow = inngest.createFunction(
                 }
               }
 
+              emitFileStreamStart(projectId, file.path);
+
               const content = await generateFileContent({
                 file,
                 userPrompt: prompt,
                 setupContext,
                 dependencyContents,
                 ...(existingContent !== undefined ? { existingContent } : {}),
+                onDelta: (delta) => emitFileDelta(projectId, file.path, delta),
               });
 
               await writeWorkspaceFile(session.workspacePath, file.path, content);
+
+              emitFileStreamEnd(projectId, file.path, content);
 
               return { path: file.path, content };
             })
@@ -381,12 +382,18 @@ export const codingWorkflow = inngest.createFunction(
         });
 
         const fixedContent = await step.run(`fix-${fixAttempt}-${targetPath}`, async () => {
+          emitFileStreamStart(projectId, targetPath);
+
           const content = await fixFile({
             file: targetFile,
             currentContent: writtenContent[targetPath]!,
             buildError: lastError!,
+            onDelta: (delta) => emitFileDelta(projectId, targetPath, delta),
           });
           await writeWorkspaceFile(session.workspacePath, targetPath, content);
+
+          emitFileStreamEnd(projectId, targetPath, content);
+
           return content;
         });
 

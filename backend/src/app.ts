@@ -9,11 +9,14 @@ import { serve } from "inngest/express";
 import { inngest } from "./config/inngest.js"
 import { functions } from "./workflows/index.js";
 
-console.log(process.env.ANTHROPIC_API_KEY)
+
 const app = express()
 
 app.use(cors({origin: "http://localhost:3000",credentials: true,}));
-app.use(express.json());
+// Inngest resends the full accumulated step-output history on every
+// request as a step function progresses — generated file contents in
+// that history easily exceed Express's 100kb default.
+app.use(express.json({ limit: "50mb" }));
 
 app.use("/api/inngest", serve({client: inngest,functions}));
 

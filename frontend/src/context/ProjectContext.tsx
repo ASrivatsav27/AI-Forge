@@ -1,6 +1,9 @@
-import type { Project,ProjectDetails,ProjectDetailsPayload,FileTree,createProjectPayload,DeleteProjectPayload } from "@/types/project.types";
-import { createContext,useState,type ReactNode } from "react";
-import { createProject,getAllProjects,getProjectDetails,deleteProject } from "@/services/project.api";
+import type { Project,ProjectDetails,ProjectDetailsPayload,FileTree,createProjectPayload,DeleteProjectPayload,SendFollowUpPromptPayload,FollowUpPromptResult } from "@/types/project.types";
+import type { FileStreamStartEvent, FileStreamEndEvent } from "@/types/agent.types";
+import { createContext,useState,useEffect,type ReactNode } from "react";
+import axios from "axios";
+import { createProject,getAllProjects,getProjectDetails,deleteProject,sendFollowUpPrompt } from "@/services/project.api";
+import socket from "@/sockets/socket";
 
 
 type ProjectContextType = {
@@ -17,6 +20,10 @@ type ProjectContextType = {
     handleGetAllProjects: () => Promise<void>;
     handleGetProjectDetails: (payload: ProjectDetailsPayload) => Promise<void>;
     handleDeleteProject: (payload: DeleteProjectPayload) => Promise<void>;
+    handleSendFollowUpPrompt: (payload: SendFollowUpPromptPayload) => Promise<FollowUpPromptResult>;
+
+    /** path -> current agent activity, for file-tree badges. Absent = idle. */
+    fileActivity: Record<string, "writing" | "done">;
 };
 
 
@@ -34,6 +41,36 @@ export function ProjectProvider({ children }: ProjectProps) {
     const [loading, setLoading] = useState(false);
     const [fileTree, setFileTree] = useState<FileTree>({});
     const [selectedFile, setSelectedFile] = useState<string | null>(null);
+    const [fileActivity, setFileActivity] = useState<Record<string, "writing" | "done">>({});
+
+    useEffect(() => {
+        const handleStreamStart = ({ path }: FileStreamStartEvent) => {
+            setFileActivity((prev) => ({ ...prev, [path]: "writing" }));
+            setSelectedFile(path);
+        };
+
+        const handleStreamEnd = ({ path }: FileStreamEndEvent) => {
+            setFileActivity((prev) => ({ ...prev, [path]: "done" }));
+
+            // Clear the "done" flash after a moment so it doesn't linger forever.
+            setTimeout(() => {
+                setFileActivity((prev) => {
+                    if (prev[path] !== "done") return prev;
+                    const next = { ...prev };
+                    delete next[path];
+                    return next;
+                });
+            }, 1800);
+        };
+
+        socket.on("agent:file-stream-start", handleStreamStart);
+        socket.on("agent:file-stream-end", handleStreamEnd);
+
+        return () => {
+            socket.off("agent:file-stream-start", handleStreamStart);
+            socket.off("agent:file-stream-end", handleStreamEnd);
+        };
+    }, []);
     
 
     const handleCreateProject = async(payload:createProjectPayload) => {
@@ -42,6 +79,7 @@ export function ProjectProvider({ children }: ProjectProps) {
            const data = await createProject(
                payload.name,
                payload.prompt,
+               payload.setupPrompt,
                payload.framework,
                payload.backend,
                payload.database,
@@ -106,6 +144,27 @@ export function ProjectProvider({ children }: ProjectProps) {
     }
 
 
+    const handleSendFollowUpPrompt = async (payload: SendFollowUpPromptPayload): Promise<FollowUpPromptResult> => {
+        try {
+            await sendFollowUpPrompt(payload.projectId, payload.prompt, payload.force)
+            return { requiresConfirmation: false }
+        } catch (err) {
+            if (
+                axios.isAxiosError(err) &&
+                err.response?.status === 409 &&
+                err.response.data?.requiresConfirmation
+            ) {
+                return {
+                    requiresConfirmation: true,
+                    message: err.response.data?.message,
+                }
+            }
+            console.error(err)
+            throw err
+        }
+    }
+
+
     return (
         <ProjectContext.Provider value={{
             fileTree,
@@ -115,6 +174,8 @@ export function ProjectProvider({ children }: ProjectProps) {
             handleGetAllProjects,
             handleDeleteProject,
             handleGetProjectDetails,
+            handleSendFollowUpPrompt,
+            fileActivity,
             selectedFile,
             setSelectedFile,
             loading,

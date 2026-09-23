@@ -13,6 +13,7 @@ export type AgentPhase =
   | "coding:verifying"
   | "coding:fixing"
   | "coding:installing"
+  | "coding:cancelled"
   | "coding:done"
   | "error";
 
@@ -23,4 +24,18 @@ export type AgentStatusEvent = {
   file?: string;
   attempt?: number;
   timestamp: number;
+};
+
+export type FileStreamStartEvent = {
+  path: string;
+};
+
+export type FileDeltaEvent = {
+  path: string;
+  delta: string;
+};
+
+export type FileStreamEndEvent = {
+  path: string;
+  content: string;
 };

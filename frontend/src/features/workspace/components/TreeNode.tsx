@@ -36,7 +36,8 @@ const TreeNode = ({
 }: Props) => {
   const isFolder = node !== null;
   const [open, setOpen] = useState(true);
-  const { setSelectedFile } = useProject();
+  const { setSelectedFile, fileActivity } = useProject();
+  const activity = fileActivity[path];
 
   // auto-open this folder when something starts being created inside it
   useEffect(() => {
@@ -53,6 +54,13 @@ const TreeNode = ({
       >
         <File size={16} className="shrink-0 text-zinc-400" />
         <span className="truncate">{name}</span>
+
+        {activity === "writing" && (
+          <span className="ml-auto h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-amber-400" />
+        )}
+        {activity === "done" && (
+          <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
+        )}
       </button>
     );
   }

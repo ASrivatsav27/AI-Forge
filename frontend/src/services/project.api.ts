@@ -10,6 +10,7 @@ const api = axios.create({
 export async function createProject(
     name: string,
     prompt: string,
+    setupPrompt:string,
     framework: string,
     backend?: string,
     database?: string,
@@ -19,6 +20,7 @@ export async function createProject(
     const response = await api.post("/createProject", {
         name,
         prompt,
+        setupPrompt,
         framework,
         backend,
         database,
@@ -48,5 +50,12 @@ export async function getProjectDetails(projectId:string) {
 
 export async function deleteProject(projectId:string) {
     const response = await api.delete(`/${projectId}`)
+    return response.data
+}
+
+
+
+export async function sendFollowUpPrompt(projectId: string, prompt: string, force?: boolean) {
+    const response = await api.post(`/${projectId}/prompt`, { prompt, force })
     return response.data
 }

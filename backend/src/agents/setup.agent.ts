@@ -363,10 +363,13 @@ export type SetupContext = {
   database?: string;
   architecture?: string;
   connectionString?: string;
+  setupPrompt?: string;
 };
 
 export type SetupRequest = {
   projectId: string;
+  /** The user's application requirements — NOT read by the Setup Agent.
+   *  Kept here only so the workflow can forward it to the Coding workflow. */
   prompt: string;
   setupContext: SetupContext;
   observation?: string | undefined;
@@ -468,7 +471,7 @@ export async function setupAgent(
   const message = await groq.chat.completions.create({
     model: "qwen/qwen3.8-27b",
 
-    max_tokens:512,
+    max_tokens: 512,
 
     temperature: 0,
 
@@ -479,9 +482,12 @@ export async function setupAgent(
       },
       {
         role: "user",
-        content: `User request: ${data.prompt}
+        // NOTE: the Setup Agent reads setupContext.setupPrompt, NOT data.prompt.
+        // data.prompt contains the user's application requirements and is
+        // intentionally excluded here — it belongs to the Coding Agent only.
+        content: `Setup instructions: ${data.setupContext.setupPrompt ?? "Follow the system prompt rules for the selected framework."}
 
-Selected setup environment:
+Selected environment:
 
 Framework: ${data.setupContext.framework}
 Backend: ${data.setupContext.backend ?? "None"}
