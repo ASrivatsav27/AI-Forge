@@ -102,9 +102,9 @@ export async function sendFollowUpPromptController(req: Request<ProjectParams>, 
     const { prompt, image } = req.body;
     const userId = req.user.id;
 
-    if (!prompt?.trim()) {
+    if (!prompt?.trim() && !image) {
         return res.status(400).json({
-            message: "enter a prompt",
+            message: "Enter a prompt or attach an image.",
         });
     }
 
@@ -146,7 +146,7 @@ export async function sendFollowUpPromptController(req: Request<ProjectParams>, 
     await inngest.send(
         codingRequested.create({
             projectId,
-            prompt,
+            prompt: prompt?.trim() ?? "",
             isFollowUp: true,
             ...(image ? { image } : {}),
             setupContext: {

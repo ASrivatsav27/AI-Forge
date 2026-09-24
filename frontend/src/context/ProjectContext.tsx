@@ -43,6 +43,9 @@ export type ChatMessage = {
     timestamp: number;
     /** True while waiting for a chat-mode reply that hasn't arrived yet. */
     pending?: boolean;
+    /** Data URL for a user-attached image, so the chat log can show what
+     *  was actually sent, not just the text. */
+    imageDataUrl?: string;
 };
 
 type ProjectContextType = {
@@ -125,6 +128,17 @@ export function ProjectProvider({ children }: ProjectProps) {
      * CURRENT plan size instead of a stale closed-over value.
      */
     const planTotalFilesRef = useRef<number | null>(null);
+
+    /*
+     * Tracks the CURRENT follow-up run so its user prompt + triage marker
+     * can be removed once a non-chat run (build/quick-edit/run-command)
+     * actually finishes — leaving just the result message, the same way
+     * the live-generation cards disappear once done. Chat-mode Q&A is left
+     * alone; that's a real conversation, not a transient status.
+     */
+    const pendingRunUserMessageIdRef = useRef<string | null>(null);
+    const pendingRunSystemMessageIdRef = useRef<string | null>(null);
+    const pendingRunModeRef = useRef<string | null>(null);
 
     useEffect(() => {
         const handleStreamStart = ({ path }: FileStreamStartEvent) => {
@@ -312,16 +326,21 @@ export function ProjectProvider({ children }: ProjectProps) {
                         return prev;
                     }
 
+                    const sysId = `sys-${evt.timestamp}-${Math.random().toString(36).slice(2)}`;
+                    pendingRunSystemMessageIdRef.current = sysId;
+
                     return [
                         ...prev,
                         {
-                            id: `sys-${evt.timestamp}-${Math.random().toString(36).slice(2)}`,
+                            id: sysId,
                             role: "system",
                             text: evt.message,
                             timestamp: evt.timestamp,
                         },
                     ];
                 });
+
+                pendingRunModeRef.current = evt.message.split(" — ")[0]?.trim() ?? null;
 
                 // Only "chat" mode ever produces an agent:message reply — for
                 // quick-edit/full, nothing is coming to replace the "thinking"
@@ -337,6 +356,10 @@ export function ProjectProvider({ children }: ProjectProps) {
                 // Don't leave "thinking" spinning forever if triage itself
                 // (or anything before it decided) throws.
                 setChatMessages((prev) => prev.filter((m) => m.id !== "pending-agent-reply"));
+
+                pendingRunUserMessageIdRef.current = null;
+                pendingRunSystemMessageIdRef.current = null;
+                pendingRunModeRef.current = null;
             }
 
             if (evt.phase !== "coding:planning") {
@@ -399,16 +422,36 @@ export function ProjectProvider({ children }: ProjectProps) {
     // their own channel, separate from agent:status/file-stream events.
     useEffect(() => {
         const handleAgentMessage = (evt: AgentMessageEvent) => {
-            setChatMessages((prev) => [
-                // Drop the "thinking" placeholder now that the real reply is in.
-                ...prev.filter((m) => m.id !== "pending-agent-reply"),
-                {
-                    id: `agent-${evt.timestamp}-${Math.random().toString(36).slice(2)}`,
-                    role: "agent",
-                    text: evt.message,
-                    timestamp: evt.timestamp,
-                },
-            ]);
+            const mode = pendingRunModeRef.current;
+            const isBuildCompletion = mode !== null && mode !== "chat";
+
+            setChatMessages((prev) => {
+                const withoutPending = prev.filter((m) => m.id !== "pending-agent-reply");
+
+                const withoutRunArtifacts = isBuildCompletion
+                    ? withoutPending.filter(
+                          (m) =>
+                              m.id !== pendingRunUserMessageIdRef.current &&
+                              m.id !== pendingRunSystemMessageIdRef.current
+                      )
+                    : withoutPending;
+
+                return [
+                    ...withoutRunArtifacts,
+                    {
+                        id: `agent-${evt.timestamp}-${Math.random().toString(36).slice(2)}`,
+                        role: "agent",
+                        text: evt.message,
+                        timestamp: evt.timestamp,
+                    },
+                ];
+            });
+
+            if (isBuildCompletion) {
+                pendingRunUserMessageIdRef.current = null;
+                pendingRunSystemMessageIdRef.current = null;
+                pendingRunModeRef.current = null;
+            }
         };
 
         socket.on("agent:message", handleAgentMessage);
@@ -507,13 +550,22 @@ export function ProjectProvider({ children }: ProjectProps) {
     const handleSendFollowUpPrompt = async (
         payload: SendFollowUpPromptPayload
     ): Promise<FollowUpPromptResult> => {
+        const userMessageId = `user-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+        pendingRunUserMessageIdRef.current = userMessageId;
+        pendingRunSystemMessageIdRef.current = null;
+        pendingRunModeRef.current = null;
+
         setChatMessages((prev) => [
             ...prev,
             {
-                id: `user-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                id: userMessageId,
                 role: "user",
                 text: payload.prompt,
                 timestamp: Date.now(),
+                ...(payload.image
+                    ? { imageDataUrl: `data:${payload.image.mediaType};base64,${payload.image.data}` }
+                    : {}),
             },
             {
                 id: "pending-agent-reply",

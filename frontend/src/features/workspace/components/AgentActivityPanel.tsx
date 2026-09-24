@@ -1,23 +1,25 @@
-// src/components/AgentActivityPanel.tsx
-
-import { useEffect, useState, useRef } from "react";
 import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
+import {
+  Check,
   CheckCircle2,
-  XCircle,
-  Send,
-  Sparkles,
   Loader2,
   Paperclip,
+  Send,
+  Sparkles,
   X,
-  ChevronDown,
-  ChevronUp,
 } from "lucide-react";
 
 import socket from "@/sockets/socket";
-import type { AgentStatusEvent, AgentStage } from "@/types/agent.types";
-import type { ImageAttachment } from "@/types/project.types";
+import type { AgentStatusEvent } from "@/types/agent.types";
 import { useProject } from "@/hooks/useProject";
-import LiveFileGenCard from "./LiveFileGenCard";
 
 type Props = {
   projectId: string;
@@ -26,664 +28,651 @@ type Props = {
 const isTerminal = (phase: string) =>
   phase.endsWith(":done") || phase === "error";
 
-const isWorkflowPhase = (phase: string) =>
-  phase.startsWith("setup:") ||
-  phase === "coding:planning" ||
-  phase === "coding:generating" ||
-  phase === "coding:verifying" ||
-  phase === "coding:fixing" ||
-  phase === "coding:installing" ||
-  phase === "coding:setup-command" ||
-  phase === "coding:cancelled" ||
-  phase === "coding:done";
-
-const STAGE_HEADLINE: Record<AgentStage, string> = {
-  setup: "Setting up your project",
-  coding: "Building your app",
+const getFileName = (path: string) => {
+  const parts = path.split("/");
+  return parts[parts.length - 1] || path;
 };
 
-const MAX_FEATURED_CARDS = 3;
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
-const TERMINAL_LINGER_MS = 2500;
+const getExtension = (path: string) => {
+  const name = getFileName(path);
+  const parts = name.split(".");
 
-// How many assistant-message chars to show before "Show more"
-const PREVIEW_CHARS = 120;
+  if (parts.length < 2) return "FILE";
+
+  return parts[parts.length - 1].toUpperCase();
+};
+
+const getUserFacingStatus = (current: AgentStatusEvent) => {
+  if (current.phase === "error") {
+    return current.stage === "setup"
+      ? "Project setup failed"
+      : "Building your project failed";
+  }
+
+  if (current.phase.endsWith(":done")) {
+    return current.stage === "setup"
+      ? "Project setup done"
+      : "Building your project done";
+  }
+
+  return current.stage === "setup"
+    ? "Setting up your project"
+    : "Building your project";
+};
 
 const AgentActivityPanel = ({ projectId }: Props) => {
-  const [current, setCurrent] = useState<AgentStatusEvent | null>(null);
-  const [workflowActive, setWorkflowActive] = useState(false);
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-
-  const lastModeRef = useRef<"chat" | "quick-edit" | "full" | null>(null);
-  const clearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
-
   const {
-    handleSendFollowUpPrompt,
+    chatMessages,
     fileGenState,
     planTotalFiles,
-    chatMessages,
-    selectedFile,
-    setSelectedFile,
+    handleSendFollowUpPrompt,
   } = useProject();
 
+  const [current, setCurrent] = useState<AgentStatusEvent | null>(null);
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
-  const [attachedImage, setAttachedImage] = useState<
-    (ImageAttachment & { previewUrl: string }) | null
-  >(null);
-  const [imageError, setImageError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Auto-scroll chat to bottom on new messages
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [chatMessages]);
+  const [image, setImage] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const handleAgentStatus = (evt: AgentStatusEvent) => {
-      if (clearTimerRef.current) {
-        clearTimeout(clearTimerRef.current);
-        clearTimerRef.current = null;
-      }
-
-      if (evt.phase === "coding:triage") {
-        const mode = evt.message.split(" — ")[0]?.trim();
-        if (mode === "chat" || mode === "quick-edit" || mode === "full") {
-          lastModeRef.current = mode;
-        }
-      }
-
-      if (
-        evt.phase === "coding:planning" &&
-        evt.message.startsWith("Quick edit needs a full rebuild")
-      ) {
-        lastModeRef.current = "full";
-      }
-
-      if (evt.phase === "coding:done" && lastModeRef.current === "chat") {
-        lastModeRef.current = null;
-        setCurrent(null);
-        setWorkflowActive(false);
-        return;
-      }
-
-      if (isWorkflowPhase(evt.phase)) {
-        setWorkflowActive(true);
-        setCurrent(evt);
-
-        if (isTerminal(evt.phase)) {
-          clearTimerRef.current = setTimeout(() => {
-            setCurrent(null);
-            setWorkflowActive(false);
-            clearTimerRef.current = null;
-          }, TERMINAL_LINGER_MS);
-        }
-      }
+      setCurrent(evt);
     };
 
     socket.on("agent:status", handleAgentStatus);
+
     return () => {
       socket.off("agent:status", handleAgentStatus);
-      if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
     };
-  }, []);
+  }, [projectId]);
 
-  const active = current && !isTerminal(current.phase);
-  const headline = current ? STAGE_HEADLINE[current.stage] : null;
-  const showLiveGen = planTotalFiles !== null && active && workflowActive;
-
-  const filesArr = Object.entries(fileGenState).sort(
-    (a, b) => a[1].startedAt - b[1].startedAt
-  );
-  const generating = filesArr.filter(
-    ([path, s]) => s.status === "generating" && path !== selectedFile
-  );
-  const completed = filesArr.filter(([, s]) => s.status === "done");
-  const featured = generating.slice(0, MAX_FEATURED_CARDS);
-  const extraGenerating = generating.slice(MAX_FEATURED_CARDS);
-  const totalFiles = planTotalFiles ?? 0;
-  const notStartedCount = Math.max(0, totalFiles - filesArr.length);
-  const progressPct =
-    totalFiles > 0 ? Math.min(100, (completed.length / totalFiles) * 100) : 0;
-
-  function toggleExpand(id: string) {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
     });
-  }
+  }, [chatMessages]);
 
-  function handleAttachClick() {
-    fileInputRef.current?.click();
-  }
+  /*
+   * Clipboard image support.
+   *
+   * This intentionally only handles images. Normal text paste is left
+   * completely untouched so the input behaves like a normal text field.
+   */
+  const handlePaste = (event: ClipboardEvent<HTMLInputElement>) => {
+    // Rich-text sources (Word, Docs, Notion, PDFs, etc.) often carry both a
+    // plain-text representation AND an embedded image/thumbnail alongside
+    // it. Real text always wins — only fall through to image-attach when
+    // there's no text on the clipboard at all (a genuine image copy).
+    const text = event.clipboardData.getData("text/plain");
+    if (text) return;
 
-  function processImageFile(file: File) {
-    setImageError(null);
-    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
-      setImageError("Only PNG, JPEG, GIF, or WebP images are supported.");
-      return;
-    }
-    if (file.size > MAX_IMAGE_BYTES) {
-      setImageError("Image is too large (max 5 MB).");
-      return;
-    }
+    const items = Array.from(event.clipboardData.items);
+
+    const imageItem = items.find((item) =>
+      item.type.startsWith("image/")
+    );
+
+    if (!imageItem) return;
+
+    event.preventDefault();
+
+    const file = imageItem.getAsFile();
+
+    if (!file) return;
+
     const reader = new FileReader();
+
     reader.onload = () => {
-      const dataUrl = reader.result as string;
-      setAttachedImage({
-        mediaType: file.type as ImageAttachment["mediaType"],
-        data: dataUrl.split(",")[1] ?? "",
-        previewUrl: dataUrl,
-      });
-    };
-    reader.onerror = () =>
-      setImageError("Couldn't read that image — try a different file.");
-    reader.readAsDataURL(file);
-  }
-
-  function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (file) processImageFile(file);
-  }
-
-  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
-    for (const item of e.clipboardData?.items ?? []) {
-      if (item.kind === "file" && item.type.startsWith("image/")) {
-        const file = item.getAsFile();
-        if (!file) continue;
-        e.preventDefault();
-        processImageFile(file);
-        break;
+      if (typeof reader.result === "string") {
+        setImage(reader.result);
       }
-    }
-  }
+    };
 
-  async function submitPrompt() {
-    if (!prompt.trim() || sending) return;
+    reader.readAsDataURL(file);
+  };
+
+  const handleImageFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      event.target.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        setImage(reader.result);
+      }
+    };
+
+    reader.readAsDataURL(file);
+
+    event.target.value = "";
+  };
+
+  const removeImage = () => {
+    setImage(null);
+  };
+
+  const parseDataUrl = (dataUrl: string): { mediaType: string; data: string } | null => {
+    const match = dataUrl.match(/^data:(image\/(?:png|jpeg|gif|webp));base64,(.+)$/);
+    if (!match) return null;
+    return { mediaType: match[1]!, data: match[2]! };
+  };
+
+  const generationFiles = useMemo(
+    () => Object.entries(fileGenState),
+    [fileGenState]
+  );
+
+  const generatingFiles = generationFiles.filter(
+    ([, file]) => file.status === "generating"
+  );
+
+  const completedFiles = generationFiles.filter(
+    ([, file]) => file.status === "done"
+  );
+
+  const completedCount = completedFiles.length;
+
+  const total =
+    planTotalFiles && planTotalFiles > 0
+      ? planTotalFiles
+      : generationFiles.length;
+
+  const progress =
+    total > 0 ? Math.min(100, (completedCount / total) * 100) : 0;
+
+  const isGenerating =
+    current?.stage === "coding" &&
+    current.phase !== "coding:done" &&
+    current.phase !== "error" &&
+    (generatingFiles.length > 0 || total > 0);
+
+  const liveCards = generatingFiles.slice(0, 3);
+
+  const remainingGenerating = Math.max(
+    0,
+    generatingFiles.length - liveCards.length
+  );
+
+  const sendPrompt = async (event?: FormEvent) => {
+    event?.preventDefault();
+
+    const value = prompt.trim();
+
+    if ((!value && !image) || sending) return;
+
     setSending(true);
+
+    const currentImage = image;
+
+    setPrompt("");
+    setImage(null);
+
+    const parsedImage = currentImage ? parseDataUrl(currentImage) : null;
+
     try {
       await handleSendFollowUpPrompt({
         projectId,
-        prompt: prompt.trim(),
-        ...(attachedImage
-          ? { image: { mediaType: attachedImage.mediaType, data: attachedImage.data } }
-          : {}),
+        prompt: value,
+        force: false,
+        image: parsedImage ?? undefined,
       });
-      setPrompt("");
-      setAttachedImage(null);
-    } catch (err) {
-      console.error(err);
+    } catch (error) {
+      console.error("Failed to send agent prompt:", error);
+
+      setPrompt(value);
+      setImage(currentImage);
     } finally {
       setSending(false);
     }
-  }
+  };
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    submitPrompt();
-  }
+  const active = current && !isTerminal(current.phase);
 
   return (
-    <div
-      className="flex h-full flex-col"
-      style={{
-        background: "#111",
-        fontFamily:
-          'Inter, "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      }}
-    >
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-black text-zinc-200">
       <style>{`
-        @keyframes shimmer {
-          0%   { background-position: 200% 0; }
-          100% { background-position: -200% 0; }
+        @keyframes agent-shimmer {
+          0% {
+            background-position: 200% 0;
+          }
+
+          100% {
+            background-position: -200% 0;
+          }
         }
-        .aap-shimmer {
+
+        .agent-shimmer {
           background: linear-gradient(
             90deg,
-            #4b4b55 0%, #4b4b55 35%,
-            #e4e4e7 50%,
-            #4b4b55 65%, #4b4b55 100%
+            #52525b 0%,
+            #52525b 35%,
+            #f4f4f5 50%,
+            #52525b 65%,
+            #52525b 100%
           );
           background-size: 200% 100%;
           -webkit-background-clip: text;
           background-clip: text;
           color: transparent;
-          animation: shimmer 2s linear infinite;
+          animation: agent-shimmer 2s linear infinite;
         }
-        @keyframes blink {
-          0%,49%{ opacity:1 } 50%,100%{ opacity:0 }
-        }
-        @keyframes pulse-dot {
-          0%,100%{ opacity:1; transform:scale(1); }
-          50%    { opacity:.35; transform:scale(.7); }
-        }
-        .aap-dot {
-          display:inline-block;
-          width:5px; height:5px;
-          border-radius:9999px;
-          background:#71717a;
-          animation: pulse-dot 1.1s ease-in-out infinite;
-        }
-        @keyframes aap-fade-out {
-          0%  { opacity:1; }
-          60% { opacity:1; }
-          100%{ opacity:0; }
-        }
-        .aap-linger { animation: aap-fade-out ${TERMINAL_LINGER_MS}ms ease forwards; }
 
-        .aap-scroll::-webkit-scrollbar { width:4px; }
-        .aap-scroll::-webkit-scrollbar-track { background:transparent; }
-        .aap-scroll::-webkit-scrollbar-thumb { background:#27272a; border-radius:2px; }
-
-        .aap-input { field-sizing: content; }
-      `}</style>
-
-      {/* ── Header ─────────────────────────────────────────── */}
-      <div
-        className="flex shrink-0 items-center gap-2 px-4 py-3"
-        style={{ borderBottom: "1px solid #1f1f1f" }}
-      >
-        <Sparkles size={13} style={{ color: "#a78bfa" }} />
-        <span
-          style={{
-            fontSize: 13,
-            fontWeight: 600,
-            color: "#e4e4e7",
-            letterSpacing: "-0.01em",
-          }}
-        >
-          AI Forge
-        </span>
-      </div>
-
-      {/* ── Conversation ───────────────────────────────────── */}
-      <div
-        ref={scrollRef}
-        className="aap-scroll min-h-0 flex-1 overflow-y-auto px-4 py-3"
-        style={{ display: "flex", flexDirection: "column", gap: 20 }}
-      >
-        {chatMessages.length === 0 && !workflowActive && (
-          <div
-            style={{
-              flex: 1,
-              display: "flex",
-              alignItems: "flex-end",
-              paddingBottom: 4,
-            }}
-          />
-        )}
-
-        {/* Message groups */}
-        {chatMessages.map((m) => {
-          /* ── system note ── */
-          if (m.role === "system") {
-            return (
-              <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <Sparkles size={10} style={{ color: "#7c3aed", flexShrink: 0 }} />
-                <span style={{ fontSize: 11.5, color: "#52525b" }}>{m.text}</span>
-              </div>
-            );
+        @keyframes agent-pulse {
+          0%,
+          100% {
+            opacity: 1;
+            transform: scale(1);
           }
 
-          const isUser = m.role === "user";
-          const text = m.text ?? "";
-          const isLong = !isUser && text.length > PREVIEW_CHARS;
-          const expanded = expandedIds.has(m.id);
-          const displayText = isLong && !expanded ? text.slice(0, PREVIEW_CHARS).trimEnd() + "…" : text;
+          50% {
+            opacity: 0.4;
+            transform: scale(0.75);
+          }
+        }
 
-          return (
-            <div key={m.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {/* Role label */}
-              <span
-                style={{
-                  fontSize: 10.5,
-                  fontWeight: 600,
-                  letterSpacing: "0.06em",
-                  textTransform: "uppercase",
-                  color: "#3f3f46",
-                  paddingLeft: 2,
-                }}
-              >
-                {isUser ? "You" : "Agent"}
-              </span>
+        .agent-pulse {
+          animation: agent-pulse 1.1s ease-in-out infinite;
+        }
 
-              {/* Bubble */}
-              <div
-                style={{
-                  background: "#1a1a1a",
-                  border: "1px solid #252525",
-                  borderRadius: 8,
-                  padding: "8px 11px",
-                  fontSize: 13,
-                  lineHeight: 1.55,
-                  color: "#d4d4d8",
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                }}
-              >
-                {m.pending ? (
-                  <span style={{ display: "inline-flex", gap: 4, alignItems: "center", padding: "2px 0" }}>
-                    <span className="aap-dot" style={{ animationDelay: "0ms" }} />
-                    <span className="aap-dot" style={{ animationDelay: "160ms" }} />
-                    <span className="aap-dot" style={{ animationDelay: "320ms" }} />
+        .agent-scroll::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .agent-scroll::-webkit-scrollbar-track {
+          background: #000000;
+        }
+
+        .agent-scroll::-webkit-scrollbar-thumb {
+          background: #202020;
+          border-radius: 999px;
+        }
+
+        .agent-scroll::-webkit-scrollbar-thumb:hover {
+          background: #2a2a2a;
+        }
+      `}</style>
+
+      {/* HEADER */}
+      <div className="flex h-9 shrink-0 items-center justify-between border-b border-[#1F1F1F] bg-black px-3">
+        <div className="flex items-center gap-2">
+          <Sparkles
+            size={12}
+            strokeWidth={1.7}
+            className="text-violet-400"
+          />
+
+          <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-zinc-400">
+            Agent
+          </span>
+        </div>
+
+        {active && (
+          <span className="flex items-center gap-1.5 text-[9px] uppercase tracking-[0.08em] text-zinc-600">
+            <span className="agent-pulse h-1.5 w-1.5 rounded-full bg-violet-400" />
+            Working
+          </span>
+        )}
+      </div>
+
+      {/* CONTENT */}
+      <div className="agent-scroll min-h-0 flex-1 overflow-y-auto bg-black">
+        <div className="flex min-h-full flex-col">
+
+          {/* EMPTY */}
+          {!chatMessages.length && !isGenerating && !current && (
+            <div className="flex flex-1 items-center justify-center px-5">
+              <div className="text-center">
+                <p className="text-[12px] font-normal leading-[1.5] text-zinc-600">
+                  Waiting for agent…
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* CHAT */}
+          {chatMessages.length > 0 && (
+            <div className="space-y-3 bg-black px-3 py-3">
+              {chatMessages.map((message) => {
+                if (message.pending) {
+                  return (
+                    <div
+                      key={message.id}
+                      className="flex items-center gap-2 px-1"
+                    >
+                      <span className="agent-pulse h-1.5 w-1.5 rounded-full bg-blue-400" />
+
+                      <span className="text-[10px] font-normal text-zinc-600">
+                        Agent is thinking…
+                      </span>
+                    </div>
+                  );
+                }
+
+                if (message.role === "system") {
+                  return (
+                    <div
+                      key={message.id}
+                      className="flex items-center gap-2 py-1"
+                    >
+                      <div className="h-px flex-1 bg-[#171717]" />
+
+                      <span className="shrink-0 text-[9px] font-normal uppercase tracking-[0.06em] text-zinc-700">
+                        {message.text}
+                      </span>
+
+                      <div className="h-px flex-1 bg-[#171717]" />
+                    </div>
+                  );
+                }
+
+                const isAgent = message.role === "agent";
+
+                return (
+                  <div
+                    key={message.id}
+                    className={`flex ${
+                      isAgent ? "justify-start" : "justify-end"
+                    }`}
+                  >
+                    <div
+                      className={[
+                        "max-w-[92%]",
+                        "rounded-[6px]",
+                        "border",
+                        "px-2.5 py-2",
+                        "text-[12px]",
+                        "font-normal",
+                        "leading-[1.55]",
+                        isAgent
+                          ? "border-blue-500/20 bg-blue-500/[0.07] text-zinc-300"
+                          : "border-[#242424] bg-[#151515] text-zinc-300",
+                      ].join(" ")}
+                    >
+                      {isAgent && (
+                        <div className="mb-1.5 flex items-center gap-1.5">
+                          <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
+
+                          <span className="text-[9px] font-medium uppercase tracking-[0.08em] text-blue-400/80">
+                            Agent
+                          </span>
+                        </div>
+                      )}
+
+                      {message.imageDataUrl && (
+                        <img
+                          src={message.imageDataUrl}
+                          alt="Attached"
+                          className="mb-1.5 max-h-40 w-auto rounded-[4px] object-cover"
+                        />
+                      )}
+
+                      <div className="whitespace-pre-wrap break-words">
+                        {message.text}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+
+          {/* GENERATION */}
+          {isGenerating && (
+            <div className="border-t border-[#171717] bg-black px-3 pb-4 pt-3">
+              <div className="mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="agent-pulse h-1.5 w-1.5 rounded-full bg-violet-400" />
+
+                  <span className="text-[12px] font-medium leading-[1.4] text-zinc-300">
+                    Building your app...
                   </span>
-                ) : (
-                  displayText
+                </div>
+
+                <div className="mt-1 pl-3.5 text-[10px] font-normal text-zinc-600">
+                  Generating {total || "—"} files in parallel
+                </div>
+              </div>
+
+              <div className="mb-3">
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className="text-[9px] font-normal uppercase tracking-[0.06em] text-zinc-700">
+                    Progress
+                  </span>
+
+                  <span className="font-mono text-[9px] text-zinc-500">
+                    {completedCount} / {total || 0}
+                  </span>
+                </div>
+
+                <div className="h-[2px] overflow-hidden rounded-full bg-[#1A1A1A]">
+                  <div
+                    className="h-full rounded-full bg-violet-500 transition-[width] duration-300 ease-out"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {liveCards.map(([path, file]) => (
+                  <div
+                    key={path}
+                    className="overflow-hidden rounded-[6px] border border-[#202020] bg-[#111111]"
+                  >
+                    <div className="flex h-7 items-center justify-between border-b border-[#1C1C1C] px-2">
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <span className="agent-pulse h-1.5 w-1.5 shrink-0 rounded-full bg-violet-400" />
+
+                        <span className="truncate font-mono text-[9px] font-normal text-zinc-400">
+                          {getFileName(path)}
+                        </span>
+                      </div>
+
+                      <span className="ml-2 shrink-0 rounded-[3px] border border-violet-500/20 bg-violet-500/[0.07] px-1 py-0.5 font-mono text-[8px] font-normal text-violet-300/70">
+                        {getExtension(path)}
+                      </span>
+                    </div>
+
+                    <div className="relative max-h-[88px] overflow-hidden bg-[#0A0A0A] px-2 py-1.5">
+                      <pre className="overflow-hidden font-mono text-[8px] font-normal leading-[1.55] text-zinc-600">
+                        {file.content
+                          ? file.content.slice(-900)
+                          : "// generating..."}
+                      </pre>
+
+                      <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-[#0A0A0A] to-transparent" />
+
+                      <span className="absolute bottom-2 right-2 h-2 w-[1px] bg-violet-400/70" />
+                    </div>
+                  </div>
+                ))}
+
+                {remainingGenerating > 0 && (
+                  <div className="px-1 pt-0.5 text-[9px] font-normal text-zinc-700">
+                    + {remainingGenerating} more file
+                    {remainingGenerating !== 1 ? "s" : ""}...
+                  </div>
                 )}
               </div>
 
-              {/* Show more / less */}
-              {isLong && !m.pending && (
-                <button
-                  onClick={() => toggleExpand(m.id)}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 4,
-                    background: "none",
-                    border: "none",
-                    padding: "2px 2px",
-                    cursor: "pointer",
-                    color: "#52525b",
-                    fontSize: 11.5,
-                  }}
-                >
-                  {expanded ? (
-                    <>
-                      <ChevronUp size={11} /> Show less
-                    </>
-                  ) : (
-                    <>
-                      <ChevronDown size={11} /> Show more
-                    </>
-                  )}
-                </button>
+              {completedFiles.length > 0 && (
+                <div className="mt-3 space-y-1 border-t border-[#171717] pt-2">
+                  {completedFiles
+                    .slice(-4)
+                    .reverse()
+                    .map(([path]) => (
+                      <div
+                        key={path}
+                        className="flex items-center gap-1.5 px-1 py-0.5"
+                      >
+                        <Check
+                          size={10}
+                          strokeWidth={2}
+                          className="text-emerald-500"
+                        />
+
+                        <span className="truncate font-mono text-[9px] font-normal text-zinc-600">
+                          {getFileName(path)}
+                        </span>
+
+                        <span className="ml-auto text-[8px] font-normal text-emerald-500/60">
+                          Done
+                        </span>
+                      </div>
+                    ))}
+                </div>
               )}
+
+              <div className="mt-3 rounded-[5px] border border-[#1A1A1A] bg-[#0B0B0B] px-2 py-1.5">
+                <div className="flex gap-1.5">
+                  <Sparkles
+                    size={10}
+                    className="mt-0.5 shrink-0 text-violet-400/70"
+                  />
+
+                  <div>
+                    <p className="text-[9px] font-normal text-zinc-500">
+                      These updates are temporary
+                    </p>
+
+                    <p className="mt-0.5 text-[8px] font-normal text-zinc-700">
+                      They'll disappear once the build is complete.
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
-          );
-        })}
+          )}
 
-        {/* ── Workflow status (inline, after messages) ─────── */}
-        {workflowActive && !showLiveGen && current && (
-          <div className={isTerminal(current.phase) ? "aap-linger" : ""}>
-            {active ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                <Sparkles size={11} style={{ color: "#7c3aed", flexShrink: 0 }} />
-                <span className="aap-shimmer" style={{ fontSize: 13, fontWeight: 500 }}>
-                  {headline}…
-                </span>
-              </div>
-            ) : current.phase === "error" ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                <XCircle size={13} style={{ color: "#f87171", flexShrink: 0 }} />
-                <span style={{ fontSize: 13, color: "#a1a1aa" }}>{headline} failed</span>
-              </div>
-            ) : (
-              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                <CheckCircle2 size={13} style={{ color: "#34d399", flexShrink: 0 }} />
-                <span style={{ fontSize: 13, color: "#a1a1aa" }}>{headline} done</span>
-              </div>
-            )}
-          </div>
-        )}
+          {/* STATUS */}
+          {!isGenerating && current && !chatMessages.length && (
+            <div className="flex flex-1 items-center justify-center bg-black px-4">
+              <div className="flex items-center gap-2.5">
+                {active ? (
+                  <>
+                    <span className="agent-pulse h-[7px] w-[7px] shrink-0 rounded-full bg-zinc-300" />
 
-        {/* ── Live file gen ─────────────────────────────────── */}
-        {showLiveGen && (
-          <div
-            style={{
-              background: "#151515",
-              border: "1px solid #252525",
-              borderRadius: 8,
-              overflow: "hidden",
-            }}
-          >
-            {/* Gen header */}
-            <div style={{ padding: "10px 12px 8px", borderBottom: "1px solid #1f1f1f" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <Sparkles size={11} style={{ color: "#7c3aed" }} />
-                <span className="aap-shimmer" style={{ fontSize: 12.5, fontWeight: 500 }}>
-                  {headline}…
-                </span>
-              </div>
-              <p style={{ fontSize: 11, color: "#52525b", marginTop: 3 }}>
-                Generating {totalFiles} files in parallel
-              </p>
-
-              <div
-                style={{
-                  marginTop: 8,
-                  height: 2,
-                  width: "100%",
-                  background: "#1f1f1f",
-                  borderRadius: 1,
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  style={{
-                    height: "100%",
-                    width: `${progressPct}%`,
-                    background: "#7c3aed",
-                    borderRadius: 1,
-                    transition: "width 300ms ease",
-                  }}
-                />
-              </div>
-
-              <p style={{ fontSize: 10.5, color: "#3f3f46", marginTop: 4, textAlign: "right" }}>
-                {completed.length} / {totalFiles}
-              </p>
-            </div>
-
-            {/* File list */}
-            <div style={{ padding: "6px 4px" }}>
-              {featured.map(([path, state]) => (
-                <LiveFileGenCard
-                  key={path}
-                  path={path}
-                  content={state.content}
-                  onOpen={() => setSelectedFile(path)}
-                />
-              ))}
-
-              {extraGenerating.map(([path]) => (
-                <button
-                  key={path}
-                  onClick={() => setSelectedFile(path)}
-                  style={{
-                    display: "flex",
-                    width: "100%",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    background: "none",
-                    border: "none",
-                    padding: "5px 8px",
-                    cursor: "pointer",
-                    borderRadius: 5,
-                  }}
-                >
-                  <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                    <Loader2 size={10} style={{ color: "#7c3aed", flexShrink: 0, animation: "spin 1s linear infinite" }} />
-                    <span style={{ fontSize: 11.5, color: "#a1a1aa", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {path.split("/").pop()}
+                    <span className="agent-shimmer text-[12px] font-medium">
+                      {getUserFacingStatus(current)}…
                     </span>
-                  </span>
-                  <span style={{ fontSize: 11, color: "#52525b", flexShrink: 0 }}>Generating…</span>
-                </button>
-              ))}
+                  </>
+                ) : current.phase === "error" ? (
+                  <>
+                    <X
+                      size={14}
+                      strokeWidth={1.7}
+                      className="shrink-0 text-red-400"
+                    />
 
-              {completed.map(([path]) => (
-                <button
-                  key={path}
-                  onClick={() => setSelectedFile(path)}
-                  style={{
-                    display: "flex",
-                    width: "100%",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    background: "none",
-                    border: "none",
-                    padding: "5px 8px",
-                    cursor: "pointer",
-                    borderRadius: 5,
-                  }}
-                >
-                  <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                    <CheckCircle2 size={11} style={{ color: "#34d399", flexShrink: 0 }} />
-                    <span style={{ fontSize: 11.5, color: "#a1a1aa", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {path.split("/").pop()}
+                    <span className="text-[12px] font-normal text-zinc-400">
+                      {getUserFacingStatus(current)}
                     </span>
-                  </span>
-                  <span style={{ fontSize: 11, color: "#52525b", flexShrink: 0 }}>Done</span>
-                </button>
-              ))}
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2
+                      size={14}
+                      strokeWidth={1.7}
+                      className="shrink-0 text-emerald-500"
+                    />
 
-              {notStartedCount > 0 && (
-                <p style={{ fontSize: 11, color: "#3f3f46", padding: "4px 8px" }}>
-                  + {notStartedCount} more file{notStartedCount === 1 ? "" : "s"}…
-                </p>
-              )}
+                    <span className="text-[12px] font-normal text-zinc-400">
+                      {getUserFacingStatus(current)}
+                    </span>
+                  </>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
-      {/* ── Input ──────────────────────────────────────────── */}
-      <div
-        className="shrink-0"
-        style={{ borderTop: "1px solid #1f1f1f", padding: "10px 12px 12px" }}
+      {/* INPUT */}
+      <form
+        onSubmit={sendPrompt}
+        className="shrink-0 border-t border-[#1F1F1F] bg-black p-2"
       >
-        {imageError && (
-          <p style={{ fontSize: 11, color: "#f87171", marginBottom: 6 }}>{imageError}</p>
-        )}
-
-        {attachedImage && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              background: "#1a1a1a",
-              border: "1px solid #252525",
-              borderRadius: 7,
-              padding: "6px 8px",
-              marginBottom: 7,
-            }}
-          >
+        {image && (
+          <div className="mb-2 flex items-center gap-2 rounded-[6px] border border-[#202020] bg-[#111111] p-1.5">
             <img
-              src={attachedImage.previewUrl}
-              alt="Attached"
-              style={{ height: 28, width: 28, borderRadius: 4, objectFit: "cover", flexShrink: 0 }}
+              src={image}
+              alt="Attachment preview"
+              className="h-10 w-10 rounded-[4px] object-cover"
             />
-            <span style={{ flex: 1, fontSize: 11.5, color: "#71717a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              Image attached
-            </span>
+
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] text-zinc-400">
+                Image attached
+              </p>
+
+              <p className="text-[8px] text-zinc-700">
+                Ready to send to the agent
+              </p>
+            </div>
+
             <button
               type="button"
-              onClick={() => setAttachedImage(null)}
-              style={{ background: "none", border: "none", padding: 2, cursor: "pointer", color: "#52525b", display: "flex" }}
+              onClick={removeImage}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] text-zinc-600 hover:bg-[#1A1A1A] hover:text-zinc-300"
             >
               <X size={12} />
             </button>
           </div>
         )}
 
-        <div
-          style={{
-            display: "flex",
-            alignItems: "flex-end",
-            gap: 6,
-            background: "#1a1a1a",
-            border: "1px solid #252525",
-            borderRadius: 9,
-            padding: "7px 8px 7px 10px",
-          }}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={ACCEPTED_IMAGE_TYPES.join(",")}
-            onChange={handleFileSelected}
-            style={{ display: "none" }}
-          />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleImageFile}
+          className="hidden"
+        />
 
+        <div className="flex min-h-[38px] items-center gap-1 rounded-[6px] border border-[#242424] bg-[#111111] px-2 transition-colors focus-within:border-[#303030]">
           <button
             type="button"
-            onClick={handleAttachClick}
+            title="Attach image"
+            onClick={() => fileInputRef.current?.click()}
             disabled={sending}
-            style={{
-              background: "none",
-              border: "none",
-              padding: "3px 4px",
-              cursor: "pointer",
-              color: "#52525b",
-              display: "flex",
-              alignItems: "center",
-              flexShrink: 0,
-              opacity: sending ? 0.4 : 1,
-            }}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[5px] text-zinc-600 transition-colors hover:bg-[#1A1A1A] hover:text-zinc-300 disabled:opacity-40"
           >
-            <Paperclip size={14} />
+            <Paperclip size={13} strokeWidth={1.7} />
           </button>
 
-          <textarea
+          <input
             value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
+            onChange={(event) => setPrompt(event.target.value)}
             onPaste={handlePaste}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                submitPrompt();
-              }
-            }}
-            placeholder="Ask the agent…"
-            rows={1}
             disabled={sending}
-            style={{
-              flex: 1,
-              resize: "none",
-              background: "none",
-              border: "none",
-              outline: "none",
-              fontSize: 13,
-              color: "#d4d4d8",
-              lineHeight: 1.5,
-              maxHeight: 120,
-              overflowY: "auto",
-              fontFamily: "inherit",
-            }}
-            className="aap-scroll"
+            placeholder="Ask the agent..."
+            className="min-w-0 flex-1 bg-transparent px-1 text-[12px] font-normal leading-none text-zinc-300 outline-none placeholder:text-zinc-700"
           />
 
           <button
-            type="button"
-            onClick={submitPrompt}
-            disabled={sending || !prompt.trim()}
-            style={{
-              background: prompt.trim() && !sending ? "#e4e4e7" : "#27272a",
-              border: "none",
-              borderRadius: 6,
-              width: 28,
-              height: 28,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: prompt.trim() && !sending ? "pointer" : "default",
-              color: prompt.trim() && !sending ? "#111" : "#52525b",
-              flexShrink: 0,
-              transition: "background 150ms, color 150ms",
-            }}
+            type="submit"
+            disabled={(!prompt.trim() && !image) || sending}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[5px] text-zinc-600 transition-colors hover:bg-violet-500/10 hover:text-violet-400 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <Send size={13} />
+            {sending ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <Send size={12} strokeWidth={1.7} />
+            )}
           </button>
         </div>
-      </div>
+      </form>
     </div>
   );
 };

@@ -265,6 +265,7 @@ export const codingWorkflow = inngest.createFunction(
           if (runResult.ready) {
             await step.run("run-command-done", async () => {
               emitAgentStatus(projectId, "coding", "coding:done", "Preview is live.");
+              emitAgentMessage(projectId, "Dev server started — the preview is live.");
             });
 
             return {
@@ -331,6 +332,7 @@ export const codingWorkflow = inngest.createFunction(
             if (quickVerify.ready) {
               await step.run("send-quick-edit-done", async () => {
                 emitAgentStatus(projectId, "coding", "coding:done", "Preview is live.");
+                emitAgentMessage(projectId, `Updated ${targetPath} — the preview is live.`);
               });
 
               return {
@@ -479,8 +481,18 @@ export const codingWorkflow = inngest.createFunction(
         });
 
         if (verifyResult.ready) {
+          await step.run(`send-build-done-${fixAttempt}`, async () => {
+            emitAgentStatus(projectId, "coding", "coding:done", "Preview is live.");
+
+            if (isFollowUp) {
+              emitAgentMessage(
+                projectId,
+                `Build complete — generated ${plan.files.length} file${plan.files.length === 1 ? "" : "s"} and the preview is live.`,
+              );
+            }
+          });
+
           previewReady = true;
-          emitAgentStatus(projectId, "coding", "coding:done", "Preview is live.");
           break;
         }
 
