@@ -23,7 +23,7 @@ const Explorer = () => {
   const [rootOpen, setRootOpen] = useState(true);
   const [creating, setCreating] = useState<CreatingState>(null);
 
-  // holds the path we should auto-select once it shows up in the next tree update
+  // Holds the path we should auto-select once it shows up in the next tree update
   const pendingSelectRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -51,6 +51,7 @@ const Explorer = () => {
     if (!creating) return;
 
     const trimmed = name.trim();
+
     if (!trimmed) {
       setCreating(null);
       return;
@@ -65,6 +66,7 @@ const Explorer = () => {
         relativePath: fullPath,
         content: "",
       });
+
       pendingSelectRef.current = fullPath;
     } else {
       socket.emit("folder:create", {
@@ -140,7 +142,10 @@ const Explorer = () => {
             <RefreshCw size={14} />
           </button>
 
-          <button className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-white">
+          <button
+            className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+            title="More"
+          >
             <Ellipsis size={14} />
           </button>
         </div>
@@ -148,7 +153,7 @@ const Explorer = () => {
 
       {/* Tree */}
       {rootOpen && (
-        <div className="flex-1 overflow-y-auto py-1">
+        <div className="explorer-scroll flex-1 overflow-y-auto py-1">
           <div className="ml-4">
             {Object.entries(fileTree).map(([name, node]) => (
               <TreeNode

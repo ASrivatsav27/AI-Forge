@@ -100,6 +100,35 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+
+  /* ============================================================
+     AI FORGE IDE TOKENS
+     ============================================================ */
+
+  --ide-bg: #0a0a0a;
+  --ide-panel: #121314;
+  --ide-panel-elevated: #18191b;
+
+  --ide-border: #1f2023;
+  --ide-border-strong: #2a2b30;
+
+  --ide-text: #e4e4e7;
+  --ide-text-secondary: #a1a1aa;
+  --ide-text-muted: #52525b;
+
+  --ide-accent: #8b5cf6;
+  --ide-accent-subtle: rgba(139, 92, 246, 0.1);
+
+  --ide-success: #22c55e;
+  --ide-success-subtle: rgba(34, 197, 94, 0.1);
+
+  --ide-warning: #eab308;
+  --ide-error: #ef4444;
+
+  --ide-selection: rgba(139, 92, 246, 0.16);
+
+  --ide-hover: rgba(255, 255, 255, 0.04);
+  --ide-active: rgba(255, 255, 255, 0.07);
 }
 
 .dark {
@@ -146,9 +175,29 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* ============================================================
+   BASE
+   ============================================================ */
+
 @layer base {
+
+  /*
+   * IMPORTANT:
+   * Do NOT globally apply border-border.
+   *
+   * The IDE contains Monaco, xterm, react-resizable-panels,
+   * iframes and other internal DOM elements. Applying a border
+   * to every element causes unwanted white/light edges.
+   */
   * {
-    @apply border-border outline-ring/50;
+    @apply outline-ring/50;
+    box-sizing: border-box;
+  }
+
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
   }
 
   html,
@@ -159,13 +208,13 @@
   }
 
   html {
-    background: #0a0a0a;
+    background: var(--ide-bg);
   }
 
   body {
     margin: 0;
-    background: #0a0a0a;
-    color: #e4e4e7;
+    background: var(--ide-bg);
+    color: var(--ide-text);
 
     font-family:
       "Inter",
@@ -201,4 +250,111 @@
       "Liberation Mono",
       monospace;
   }
+}
+
+/* ============================================================
+   AI FORGE — EXPLORER SCROLLBAR
+   ============================================================ */
+
+.ide-explorer-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ide-border-strong) transparent;
+}
+
+.ide-explorer-scroll::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.ide-explorer-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ide-explorer-scroll::-webkit-scrollbar-thumb {
+  background: var(--ide-border-strong);
+  border-radius: 999px;
+}
+
+.ide-explorer-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--ide-text-muted);
+}
+
+/* ============================================================
+   AI FORGE — XTERM ISOLATION
+   ============================================================ */
+
+.ai-forge-terminal-xterm {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--ide-bg);
+}
+
+.ai-forge-terminal-xterm .xterm {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.ai-forge-terminal-xterm .xterm-screen {
+  background: transparent !important;
+}
+
+.ai-forge-terminal-xterm .xterm-viewport {
+  background: transparent !important;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ide-border-strong) transparent;
+}
+
+.ai-forge-terminal-xterm .xterm-viewport::-webkit-scrollbar {
+  width: 7px;
+}
+
+.ai-forge-terminal-xterm .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ai-forge-terminal-xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--ide-border-strong);
+  border-radius: 999px;
+}
+
+.ai-forge-terminal-xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: var(--ide-text-muted);
+}
+
+/* ─────────────────────────────────────────
+   Explorer scrollbar
+   ───────────────────────────────────────── */
+
+.explorer-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #3a3b40 transparent;
+  overscroll-behavior: contain;
+}
+
+.explorer-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.explorer-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.explorer-scroll::-webkit-scrollbar-thumb {
+  background: #303136;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+
+.explorer-scroll::-webkit-scrollbar-thumb:hover {
+  background: #46474d;
+  background-clip: padding-box;
+}
+
+.explorer-scroll::-webkit-scrollbar-corner {
+  background: transparent;
 }

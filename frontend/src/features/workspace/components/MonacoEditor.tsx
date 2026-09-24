@@ -13,7 +13,7 @@ import type {
 import { diffAddedLines } from "@/lib/lineDiff";
 
 const HIGHLIGHT_MS = 2500;
-const CHARS_PER_FRAME = 8; // ≈480 chars/sec at 60fps — typewriter pace, tune to taste
+const CHARS_PER_FRAME = 8;
 
 type StreamState = {
   streaming: boolean;
@@ -24,10 +24,15 @@ type StreamState = {
 const MonacoEditor = () => {
   const { selectedFile } = useProject();
 
-  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
-  const monacoRef = useRef<typeof Monaco | null>(null);
+  const editorRef =
+    useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
 
-  const selectedFileRef = useRef<string | null>(selectedFile);
+  const monacoRef =
+    useRef<typeof Monaco | null>(null);
+
+  const selectedFileRef =
+    useRef<string | null>(selectedFile);
+
   const contentRef = useRef("");
 
   const [content, setContent] = useState("");
@@ -35,32 +40,195 @@ const MonacoEditor = () => {
 
   /*
    * Every currently active stream lives here.
-   *
-   * This is important because the agent can emit stream:start BEFORE
-   * React has finished switching selectedFile to the new file.
    */
-  const streamsRef = useRef<Map<string, StreamState>>(new Map());
+  const streamsRef =
+    useRef<Map<string, StreamState>>(new Map());
 
   /*
    * Deltas are buffered per file.
    */
-  const pendingDeltasRef = useRef<Map<string, string>>(new Map());
+  const pendingDeltasRef =
+    useRef<Map<string, string>>(new Map());
 
-  const rafRef = useRef<number | null>(null);
+  const rafRef =
+    useRef<number | null>(null);
 
-  const decorationsRef = useRef<string[]>([]);
-  const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null
-  );
+  const decorationsRef =
+    useRef<string[]>([]);
+
+  const highlightTimeoutRef =
+    useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /*
    * Keep selectedFile immediately available to socket handlers.
    */
   selectedFileRef.current = selectedFile;
 
-  const handleMount: OnMount = (editor, monacoInstance) => {
+  /*
+   * --------------------------------------------------------------------------
+   * Monaco theme
+   * --------------------------------------------------------------------------
+   *
+   * This intentionally uses the dark editor surface from your reference:
+   *
+   * Editor background: #121314
+   * Text:              #D4D4D4
+   * Line numbers:      #858585
+   * Cursor:            #FFFFFF
+   * Selection:         #264F78
+   *
+   * This is NOT the purple IDE background.
+   */
+
+  const defineEditorTheme = (
+    monacoInstance: typeof Monaco
+  ) => {
+    monacoInstance.editor.defineTheme(
+      "ai-forge-dark",
+      {
+        base: "vs-dark",
+        inherit: true,
+
+        colors: {
+          "editor.background": "#121314",
+          "editor.foreground": "#D4D4D4",
+
+          "editorGutter.background": "#121314",
+
+          "editorLineNumber.foreground": "#858585",
+          "editorLineNumber.activeForeground": "#D4D4D4",
+
+          "editorCursor.foreground": "#FFFFFF",
+
+          "editor.selectionBackground": "#264F78",
+          "editor.inactiveSelectionBackground": "#2A2D2E",
+
+          "editor.lineHighlightBackground": "#121314",
+          "editor.lineHighlightBorder": "#121314",
+
+          "editorIndentGuide.background": "#292B2D",
+          "editorIndentGuide.activeBackground": "#3A3D40",
+
+          "editorWhitespace.foreground": "#292B2D",
+
+          "editorWidget.background": "#1E1E1E",
+          "editorWidget.border": "#333333",
+
+          "editorSuggestWidget.background": "#1E1E1E",
+          "editorSuggestWidget.border": "#333333",
+          "editorSuggestWidget.foreground": "#D4D4D4",
+          "editorSuggestWidget.selectedBackground": "#264F78",
+
+          "editorHoverWidget.background": "#1E1E1E",
+          "editorHoverWidget.border": "#333333",
+
+          "scrollbarSlider.background": "#3A3D40",
+          "scrollbarSlider.hoverBackground": "#4A4D50",
+          "scrollbarSlider.activeBackground": "#5A5D60",
+
+          "minimap.background": "#121314",
+          "minimap.selectionHighlight": "#264F78",
+        },
+
+        rules: [
+          {
+            token: "comment",
+            foreground: "6A9955",
+          },
+          {
+            token: "string",
+            foreground: "CE9178",
+          },
+          {
+            token: "string.quote",
+            foreground: "CE9178",
+          },
+          {
+            token: "number",
+            foreground: "B5CEA8",
+          },
+          {
+            token: "keyword",
+            foreground: "569CD6",
+          },
+          {
+            token: "keyword.control",
+            foreground: "C586C0",
+          },
+          {
+            token: "type",
+            foreground: "4EC9B0",
+          },
+          {
+            token: "type.identifier",
+            foreground: "4EC9B0",
+          },
+          {
+            token: "class",
+            foreground: "4EC9B0",
+          },
+          {
+            token: "function",
+            foreground: "DCDCAA",
+          },
+          {
+            token: "function.call",
+            foreground: "DCDCAA",
+          },
+          {
+            token: "variable",
+            foreground: "9CDCFE",
+          },
+          {
+            token: "variable.predefined",
+            foreground: "4FC1FF",
+          },
+          {
+            token: "constant",
+            foreground: "4FC1FF",
+          },
+          {
+            token: "delimiter",
+            foreground: "D4D4D4",
+          },
+          {
+            token: "operator",
+            foreground: "D4D4D4",
+          },
+          {
+            token: "tag",
+            foreground: "569CD6",
+          },
+          {
+            token: "attribute.name",
+            foreground: "9CDCFE",
+          },
+        ],
+      }
+    );
+  };
+
+  /*
+   * beforeMount runs BEFORE Monaco creates the editor.
+   * This prevents the initial white/light-theme flash.
+   */
+  const handleBeforeMount = (
+    monacoInstance: typeof Monaco
+  ) => {
+    defineEditorTheme(monacoInstance);
+  };
+
+  const handleMount: OnMount = (
+    editor,
+    monacoInstance
+  ) => {
     editorRef.current = editor;
     monacoRef.current = monacoInstance;
+
+    monacoInstance.editor.setTheme(
+      "ai-forge-dark"
+    );
+
     editor.focus();
   };
 
@@ -82,10 +250,11 @@ const MonacoEditor = () => {
 
     if (!editor) return;
 
-    decorationsRef.current = editor.deltaDecorations(
-      decorationsRef.current,
-      []
-    );
+    decorationsRef.current =
+      editor.deltaDecorations(
+        decorationsRef.current,
+        []
+      );
   };
 
   const hasActiveStreams = () => {
@@ -103,22 +272,42 @@ const MonacoEditor = () => {
     const monacoInstance = monacoRef.current;
     const currentFile = selectedFileRef.current;
 
-    if (!editor || !monacoInstance || !currentFile) return;
+    if (
+      !editor ||
+      !monacoInstance ||
+      !currentFile
+    ) {
+      return;
+    }
 
-    const pending = pendingDeltasRef.current.get(currentFile);
+    const pending =
+      pendingDeltasRef.current.get(
+        currentFile
+      );
 
     if (!pending) return;
 
-    // Drain at a fixed pace instead of dumping the whole buffer — network
-    // chunks arrive in uneven bursts, and applying them verbatim looked
-    // hasty/jerky rather than like a steady typewriter.
-    const chunk = pending.slice(0, CHARS_PER_FRAME);
-    const remainder = pending.slice(CHARS_PER_FRAME);
+    /*
+     * Drain at a fixed pace instead of dumping
+     * the whole buffer.
+     */
+    const chunk = pending.slice(
+      0,
+      CHARS_PER_FRAME
+    );
+
+    const remainder =
+      pending.slice(CHARS_PER_FRAME);
 
     if (remainder) {
-      pendingDeltasRef.current.set(currentFile, remainder);
+      pendingDeltasRef.current.set(
+        currentFile,
+        remainder
+      );
     } else {
-      pendingDeltasRef.current.delete(currentFile);
+      pendingDeltasRef.current.delete(
+        currentFile
+      );
     }
 
     const model = editor.getModel();
@@ -126,7 +315,9 @@ const MonacoEditor = () => {
     if (!model) return;
 
     const lastLine = model.getLineCount();
-    const lastCol = model.getLineMaxColumn(lastLine);
+
+    const lastCol =
+      model.getLineMaxColumn(lastLine);
 
     model.applyEdits([
       {
@@ -141,9 +332,10 @@ const MonacoEditor = () => {
       },
     ]);
 
-    // Immediate, not Smooth — this runs every frame while tracking the tail,
-    // and re-triggering a Smooth scroll animation before the previous one
-    // finished is what caused the jittery/blinking feel.
+    /*
+     * Immediate scrolling prevents jitter
+     * while following generated content.
+     */
     editor.revealLine(
       model.getLineCount(),
       monacoInstance.editor.ScrollType.Immediate
@@ -159,18 +351,23 @@ const MonacoEditor = () => {
       flushPending();
 
       if (hasActiveStreams()) {
-        rafRef.current = requestAnimationFrame(loop);
+        rafRef.current =
+          requestAnimationFrame(loop);
       } else {
         rafRef.current = null;
       }
     };
 
-    rafRef.current = requestAnimationFrame(loop);
+    rafRef.current =
+      requestAnimationFrame(loop);
   };
 
   const stopFlushLoop = () => {
     if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
+      cancelAnimationFrame(
+        rafRef.current
+      );
+
       rafRef.current = null;
     }
   };
@@ -182,129 +379,138 @@ const MonacoEditor = () => {
     const editor = editorRef.current;
     const monacoInstance = monacoRef.current;
 
-    if (!editor || !monacoInstance) return;
+    if (
+      !editor ||
+      !monacoInstance
+    ) {
+      return;
+    }
 
-    const addedLines = diffAddedLines(previousContent, finalContent);
+    const addedLines =
+      diffAddedLines(
+        previousContent,
+        finalContent
+      );
 
     if (addedLines.length === 0) {
       return;
     }
 
     requestAnimationFrame(() => {
-      decorationsRef.current = editor.deltaDecorations(
-        decorationsRef.current,
-        addedLines.map((line) => ({
-          range: new monacoInstance.Range(line, 1, line, 1),
-          options: {
-            isWholeLine: true,
-            className: "agent-edit-highlight-line",
-          },
-        }))
-      );
-
-      highlightTimeoutRef.current = setTimeout(() => {
-        decorationsRef.current = editor.deltaDecorations(
+      decorationsRef.current =
+        editor.deltaDecorations(
           decorationsRef.current,
-          []
+          addedLines.map((line) => ({
+            range:
+              new monacoInstance.Range(
+                line,
+                1,
+                line,
+                1
+              ),
+
+            options: {
+              isWholeLine: true,
+              className:
+                "agent-edit-highlight-line",
+            },
+          }))
         );
-      }, HIGHLIGHT_MS);
+
+      highlightTimeoutRef.current =
+        setTimeout(() => {
+          decorationsRef.current =
+            editor.deltaDecorations(
+              decorationsRef.current,
+              []
+            );
+        }, HIGHLIGHT_MS);
     });
   };
 
   /*
    * --------------------------------------------------------------------------
    * Socket listeners
-   *
-   * IMPORTANT:
-   * These listeners intentionally DO NOT depend on selectedFile.
-   *
-   * They must stay mounted while the agent is working so that changing
-   * selectedFile cannot cause us to miss agent:file-stream-start.
    * --------------------------------------------------------------------------
    */
 
   useEffect(() => {
-    const handleStreamStart = ({ path }: FileStreamStartEvent) => {
+    const handleStreamStart = ({
+      path,
+    }: FileStreamStartEvent) => {
       const editor = editorRef.current;
-      const currentSelectedFile = selectedFileRef.current;
+
+      const currentSelectedFile =
+        selectedFileRef.current;
 
       clearHighlightTimer();
       clearDecorations();
 
-      /*
-       * Capture the before-state only if this file was already open.
-       *
-       * For a file that wasn't open yet, we intentionally store null because
-       * there is no trustworthy before snapshot.
-       */
-      let preStreamContent: string | null = null;
+      let preStreamContent:
+        string | null = null;
 
-      if (path === currentSelectedFile) {
-        const model = editor?.getModel();
+      if (
+        path === currentSelectedFile
+      ) {
+        const model =
+          editor?.getModel();
 
-        preStreamContent = model?.getValue() ?? contentRef.current;
+        preStreamContent =
+          model?.getValue() ??
+          contentRef.current;
 
-        /*
-         * Immediately clear the visible editor if the file is already open.
-         */
         model?.setValue("");
 
         contentRef.current = "";
+
         setContent("");
+
         setIsAgentWriting(true);
       }
 
-      /*
-       * Create/replace the stream state.
-       */
-      streamsRef.current.set(path, {
-        streaming: true,
-        content: "",
-        preStreamContent,
-      });
+      streamsRef.current.set(
+        path,
+        {
+          streaming: true,
+          content: "",
+          preStreamContent,
+        }
+      );
 
-      /*
-       * Start with an empty pending buffer for this path.
-       */
-      pendingDeltasRef.current.set(path, "");
+      pendingDeltasRef.current.set(
+        path,
+        ""
+      );
 
-      /*
-       * If ProjectContext changes selectedFile as a result of this event,
-       * the selectedFile effect below will notice the active stream and
-       * attach the stream to Monaco.
-       */
       startFlushLoop();
     };
 
-    const handleDelta = ({ path, delta }: FileDeltaEvent) => {
-      const stream = streamsRef.current.get(path);
+    const handleDelta = ({
+      path,
+      delta,
+    }: FileDeltaEvent) => {
+      const stream =
+        streamsRef.current.get(path);
 
-      /*
-       * Ignore deltas for streams we don't know about.
-       */
-      if (!stream || !stream.streaming) {
+      if (
+        !stream ||
+        !stream.streaming
+      ) {
         return;
       }
 
-      /*
-       * Keep the authoritative streamed content in memory.
-       */
       stream.content += delta;
 
-      /*
-       * Keep a separate rendering buffer.
-       */
-      const previousPending = pendingDeltasRef.current.get(path) ?? "";
+      const previousPending =
+        pendingDeltasRef.current.get(
+          path
+        ) ?? "";
 
       pendingDeltasRef.current.set(
         path,
         previousPending + delta
       );
 
-      /*
-       * If this file is currently visible, Monaco will consume the pending
-       * buffer on the next animation frame.
-       */
       startFlushLoop();
     };
 
@@ -312,63 +518,73 @@ const MonacoEditor = () => {
       path,
       content: finalContent,
     }: FileStreamEndEvent) => {
-      const stream = streamsRef.current.get(path);
+      const stream =
+        streamsRef.current.get(path);
 
       if (!stream) {
-        /*
-         * Still handle the event gracefully if for some reason the client
-         * missed stream:start.
-         */
-        if (selectedFileRef.current === path) {
-          const editor = editorRef.current;
+        if (
+          selectedFileRef.current ===
+          path
+        ) {
+          const editor =
+            editorRef.current;
 
-          editor?.getModel()?.setValue(finalContent);
+          editor
+            ?.getModel()
+            ?.setValue(
+              finalContent
+            );
 
-          contentRef.current = finalContent;
-          setContent(finalContent);
+          contentRef.current =
+            finalContent;
+
+          setContent(
+            finalContent
+          );
+
           setIsAgentWriting(false);
         }
 
         return;
       }
 
-      /*
-       * Mark the stream finished.
-       */
       stream.streaming = false;
       stream.content = finalContent;
 
-      /*
-       * Remove any remaining buffered deltas.
-       */
-      pendingDeltasRef.current.delete(path);
+      pendingDeltasRef.current.delete(
+        path
+      );
 
-      const currentSelectedFile = selectedFileRef.current;
+      const currentSelectedFile =
+        selectedFileRef.current;
 
-      /*
-       * Only modify the visible Monaco instance if this is the file
-       * currently selected.
-       */
-      if (currentSelectedFile === path) {
+      if (
+        currentSelectedFile === path
+      ) {
         stopFlushLoop();
 
-        const editor = editorRef.current;
+        const editor =
+          editorRef.current;
 
-        /*
-         * IMPORTANT:
-         * The stream itself is visualized live, but the final file returned
-         * by the backend is authoritative.
-         */
-        editor?.getModel()?.setValue(finalContent);
+        editor
+          ?.getModel()
+          ?.setValue(
+            finalContent
+          );
 
-        contentRef.current = finalContent;
-        setContent(finalContent);
+        contentRef.current =
+          finalContent;
+
+        setContent(
+          finalContent
+        );
+
         setIsAgentWriting(false);
 
-        /*
-         * Diff only when we actually had a before snapshot.
-         */
-        if (stream.preStreamContent !== null) {
+        if (
+          stream.preStreamContent !==
+          null
+        ) {
           showDiffHighlights(
             stream.preStreamContent,
             finalContent
@@ -376,13 +592,9 @@ const MonacoEditor = () => {
         }
       }
 
-      /*
-       * The final content is now safely written on the backend.
-       *
-       * We can remove the stream state. If the user opens the file later,
-       * normal file:read will retrieve the authoritative content.
-       */
-      streamsRef.current.delete(path);
+      streamsRef.current.delete(
+        path
+      );
 
       if (!hasActiveStreams()) {
         stopFlushLoop();
@@ -432,7 +644,8 @@ const MonacoEditor = () => {
    */
 
   useEffect(() => {
-    selectedFileRef.current = selectedFile;
+    selectedFileRef.current =
+      selectedFile;
 
     if (!selectedFile) {
       setIsAgentWriting(false);
@@ -442,24 +655,34 @@ const MonacoEditor = () => {
     clearHighlightTimer();
     clearDecorations();
 
-    /*
-     * If the agent is currently streaming this file, DO NOT issue file:read.
-     *
-     * The file may not exist yet or may contain only partially generated
-     * content. Instead, attach the existing stream buffer to Monaco.
-     */
-    const activeStream = streamsRef.current.get(selectedFile);
+    const activeStream =
+      streamsRef.current.get(
+        selectedFile
+      );
 
-    if (activeStream?.streaming) {
-      const editor = editorRef.current;
-      const model = editor?.getModel();
+    if (
+      activeStream?.streaming
+    ) {
+      const editor =
+        editorRef.current;
 
-      const streamedContent = activeStream.content;
+      const model =
+        editor?.getModel();
 
-      model?.setValue(streamedContent);
+      const streamedContent =
+        activeStream.content;
 
-      contentRef.current = streamedContent;
-      setContent(streamedContent);
+      model?.setValue(
+        streamedContent
+      );
+
+      contentRef.current =
+        streamedContent;
+
+      setContent(
+        streamedContent
+      );
+
       setIsAgentWriting(true);
 
       startFlushLoop();
@@ -467,25 +690,20 @@ const MonacoEditor = () => {
       return;
     }
 
-    /*
-     * Normal file selection.
-     *
-     * Registering file:content happens in the permanent socket listener
-     * below, BEFORE this event is emitted.
-     */
     setIsAgentWriting(false);
 
-    socket.emit("file:read", {
-      relativePath: selectedFile,
-    });
+    socket.emit(
+      "file:read",
+      {
+        relativePath:
+          selectedFile,
+      }
+    );
   }, [selectedFile]);
 
   /*
    * --------------------------------------------------------------------------
    * file:content
-   *
-   * This listener stays alive permanently for the same reason as the agent
-   * stream listeners: changing selectedFile must never create a race.
    * --------------------------------------------------------------------------
    */
 
@@ -497,45 +715,52 @@ const MonacoEditor = () => {
       relativePath: string;
       content: string;
     }) => {
-      const currentSelectedFile = selectedFileRef.current;
+      const currentSelectedFile =
+        selectedFileRef.current;
 
       if (!currentSelectedFile) {
         return;
       }
 
-      if (relativePath !== currentSelectedFile) {
+      if (
+        relativePath !==
+        currentSelectedFile
+      ) {
         return;
       }
 
-      /*
-       * Never allow a normal file:content response to overwrite a live
-       * agent stream.
-       */
-      const activeStream = streamsRef.current.get(relativePath);
+      const activeStream =
+        streamsRef.current.get(
+          relativePath
+        );
 
-      if (activeStream?.streaming) {
+      if (
+        activeStream?.streaming
+      ) {
         return;
       }
 
-      contentRef.current = fileContent;
-      setContent(fileContent);
+      contentRef.current =
+        fileContent;
 
-      /*
-       * Usually React/Monaco will update from the value prop.
-       * Setting the model explicitly also handles cases where Monaco has
-       * already mounted and the value hasn't propagated yet.
-       */
-      const model = editorRef.current?.getModel();
+      setContent(
+        fileContent
+      );
 
-      if (model && model.getValue() !== fileContent) {
-        model.setValue(fileContent);
+      const model =
+        editorRef.current?.getModel();
+
+      if (
+        model &&
+        model.getValue() !==
+          fileContent
+      ) {
+        model.setValue(
+          fileContent
+        );
       }
     };
 
-    /*
-     * IMPORTANT:
-     * Listener is registered BEFORE file:read can be emitted.
-     */
     socket.on(
       "file:content",
       handleFileContent
@@ -556,7 +781,8 @@ const MonacoEditor = () => {
    */
 
   useEffect(() => {
-    contentRef.current = content;
+    contentRef.current =
+      content;
   }, [content]);
 
   /*
@@ -565,10 +791,9 @@ const MonacoEditor = () => {
    * --------------------------------------------------------------------------
    */
 
-  const handleChange = (value?: string) => {
-    /*
-     * Never allow manual edits while the agent owns this file.
-     */
+  const handleChange = (
+    value?: string
+  ) => {
     if (isAgentWriting) {
       return;
     }
@@ -577,15 +802,25 @@ const MonacoEditor = () => {
       return;
     }
 
-    const newContent = value ?? "";
+    const newContent =
+      value ?? "";
 
-    contentRef.current = newContent;
-    setContent(newContent);
+    contentRef.current =
+      newContent;
 
-    socket.emit("file:save", {
-      relativePath: selectedFile,
-      content: newContent,
-    });
+    setContent(
+      newContent
+    );
+
+    socket.emit(
+      "file:save",
+      {
+        relativePath:
+          selectedFile,
+        content:
+          newContent,
+      }
+    );
   };
 
   /*
@@ -594,12 +829,18 @@ const MonacoEditor = () => {
    * --------------------------------------------------------------------------
    */
 
-  const getLanguage = (file?: string | null) => {
+  const getLanguage = (
+    file?: string | null
+  ) => {
     if (!file) {
       return "plaintext";
     }
 
-    const ext = file.split(".").pop()?.toLowerCase();
+    const ext =
+      file
+        .split(".")
+        .pop()
+        ?.toLowerCase();
 
     switch (ext) {
       case "ts":
@@ -650,7 +891,16 @@ const MonacoEditor = () => {
 
   if (!selectedFile) {
     return (
-      <div className="flex h-full items-center justify-center bg-[#1e1e1e] text-zinc-500">
+      <div
+        className="
+          flex
+          h-full
+          items-center
+          justify-center
+          bg-[#121314]
+          text-zinc-500
+        "
+      >
         Select a file to begin editing
       </div>
     );
@@ -663,7 +913,12 @@ const MonacoEditor = () => {
    */
 
   return (
-    <div className="relative h-full">
+    <div
+      className="relative h-full"
+      style={{
+        background: "#121314",
+      }}
+    >
       <style>{`
         .agent-edit-highlight-line {
           background: rgba(52, 211, 153, 0.14);
@@ -719,13 +974,23 @@ const MonacoEditor = () => {
 
       <Editor
         height="100%"
-        theme="vs-dark"
-        language={getLanguage(selectedFile)}
+        theme="ai-forge-dark"
+        beforeMount={
+          handleBeforeMount
+        }
+        language={getLanguage(
+          selectedFile
+        )}
         value={content}
         onMount={handleMount}
         onChange={handleChange}
         options={{
           fontSize: 14,
+
+          fontFamily:
+            '"JetBrains Mono", "SFMono-Regular", Consolas, monospace',
+
+          lineHeight: 21,
 
           minimap: {
             enabled: false,
@@ -739,21 +1004,41 @@ const MonacoEditor = () => {
 
           tabSize: 2,
 
-          renderWhitespace: "selection",
+          renderWhitespace:
+            "selection",
 
-          readOnly: isAgentWriting,
+          readOnly:
+            isAgentWriting,
 
           smoothScrolling: true,
 
-          cursorSmoothCaretAnimation: "on",
+          cursorSmoothCaretAnimation:
+            "on",
 
-          // Suppresses transient red-squiggle error markers while the agent
-          // is mid-write — unbalanced brackets/quotes are expected during
-          // generation and were flashing on/off every frame.
-          renderValidationDecorations: isAgentWriting ? "off" : "editable",
+          cursorBlinking:
+            "smooth",
+
+          renderValidationDecorations:
+            isAgentWriting
+              ? "off"
+              : "editable",
 
           padding: {
             top: 16,
+          },
+
+          lineNumbersMinChars: 3,
+
+          glyphMargin: false,
+
+          folding: true,
+
+          overviewRulerBorder: false,
+
+          scrollbar: {
+            verticalScrollbarSize: 7,
+            horizontalScrollbarSize: 7,
+            useShadows: false,
           },
         }}
       />

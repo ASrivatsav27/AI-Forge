@@ -1,5 +1,5 @@
 import { useParams } from "react-router-dom";
-import { useState ,useEffect} from "react";
+import { useState, useEffect } from "react";
 import {
   Panel,
   PanelGroup,
@@ -14,75 +14,180 @@ import { useProject } from "@/hooks/useProject";
 import MonacoEditor from "../components/MonacoEditor";
 
 const ResizeHandle = () => (
-  <PanelResizeHandle className="bg-zinc-800 hover:bg-violet-500 transition-colors data-[panel-group-direction=horizontal]:w-1 data-[panel-group-direction=vertical]:h-1" />
-);
-
-const Placeholder = ({ title }: { title: string }) => (
-  <div className="flex h-full items-center justify-center border border-zinc-800 bg-zinc-900 text-zinc-500 text-lg font-medium">
-    {title}
-  </div>
+  <PanelResizeHandle
+    className="
+      shrink-0
+      border-0
+      outline-none
+      shadow-none
+      bg-[var(--ide-border)]
+      transition-colors
+      hover:bg-[var(--ide-accent)]
+      data-[panel-group-direction=horizontal]:w-px
+      data-[panel-group-direction=vertical]:h-px
+    "
+  />
 );
 
 const WorkSpacePage = () => {
   const [previewPort, setPreviewPort] = useState<string | null>(null);
 
   const { projectId } = useParams();
-  const {fileTree,handleGetProjectDetails} = useProject()
+
+  const { handleGetProjectDetails } = useProject();
 
   useEffect(() => {
-  handleGetProjectDetails({
-    id: projectId!,
-  });
-}, [projectId]);
-
+    handleGetProjectDetails({
+      id: projectId!,
+    });
+  }, [projectId]);
 
   return (
-    <div className="h-screen overflow-hidden">
-      <PanelGroup direction="horizontal" autoSaveId="workspace-layout">
-        {/* Agent — sidebar */}
-        <Panel defaultSize={16} minSize={12} maxSize={28}>
-          <AgentActivityPanel projectId={projectId!} />
-        </Panel>
-
-        <ResizeHandle />
-
-        {/* Explorer */}
-        <Panel defaultSize={16} minSize={12} maxSize={25}>
-          <Explorer/>
-        </Panel>
-
-        <ResizeHandle />
-
-        {/* Editor + Terminal */}
-        <Panel defaultSize={38} minSize={30}>
-          <PanelGroup
-            direction="vertical"
-            autoSaveId="editor-terminal-layout"
+    <div
+      className="h-screen w-full overflow-hidden p-[6px]"
+      style={{
+        background: "#050607",
+      }}
+    >
+      {/* =====================================================
+          OUTER IDE FRAME
+      ===================================================== */}
+      <div
+        className="h-full w-full overflow-hidden rounded-[7px]"
+        style={{
+          background: "var(--ide-bg)",
+          border: "1px solid var(--ide-border)",
+          boxShadow: "0 8px 30px rgba(0, 0, 0, 0.18)",
+        }}
+      >
+        <PanelGroup
+          direction="horizontal"
+          autoSaveId="workspace-layout"
+          className="h-full w-full !border-0"
+        >
+          {/* =====================================================
+              AGENT
+          ===================================================== */}
+          <Panel
+            defaultSize={16}
+            minSize={14}
+            maxSize={21}
+            className="min-w-0 !border-0"
           >
-            {/* Editor */}
-            <Panel defaultSize={70} minSize={35}>
-              <MonacoEditor/>
-            </Panel>
+            <div
+              className="h-full w-full overflow-hidden rounded-l-[6px]"
+              style={{
+                background: "var(--ide-bg)",
+              }}
+            >
+              <AgentActivityPanel projectId={projectId!} />
+            </div>
+          </Panel>
 
-            <ResizeHandle />
+          <ResizeHandle />
 
-            {/* Terminal */}
-            <Panel defaultSize={30} minSize={15} maxSize={50}>
-              <Terminal
-                projectId={projectId!}
-                setPreviewPort={setPreviewPort}
+          {/* =====================================================
+              EXPLORER
+          ===================================================== */}
+          <Panel
+            defaultSize={17}
+            minSize={15}
+            maxSize={22}
+            className="min-w-0 !border-0"
+          >
+            <div
+              className="h-full w-full overflow-hidden rounded-[4px]"
+              style={{
+                background: "var(--ide-panel)",
+              }}
+            >
+              <Explorer />
+            </div>
+          </Panel>
+
+          <ResizeHandle />
+
+          {/* =====================================================
+              EDITOR + FIXED TERMINAL
+          ===================================================== */}
+          <Panel
+            defaultSize={39}
+            minSize={34}
+            className="min-w-0 !border-0"
+          >
+            <PanelGroup
+              direction="vertical"
+              className="h-full w-full !border-0"
+            >
+              {/* ---------------- Editor ---------------- */}
+              <Panel
+                defaultSize={74}
+                minSize={74}
+                maxSize={74}
+                className="min-h-0 !border-0"
+              >
+                <div
+                  className="h-full w-full overflow-hidden rounded-[4px]"
+                  style={{
+                    background: "var(--ide-bg)",
+                  }}
+                >
+                  <MonacoEditor />
+                </div>
+              </Panel>
+
+              {/* Fixed separator — NOT draggable */}
+              <div
+                className="h-px w-full shrink-0"
+                style={{
+                  background: "var(--ide-border)",
+                }}
               />
-            </Panel>
-          </PanelGroup>
-        </Panel>
 
-        <ResizeHandle />
+              {/* ---------------- Fixed Terminal ---------------- */}
+              <Panel
+                defaultSize={26}
+                minSize={26}
+                maxSize={26}
+                className="min-h-0 !border-0"
+              >
+                <div
+                  className="h-full w-full overflow-hidden rounded-[4px]"
+                  style={{
+                    background: "var(--ide-panel)",
+                  }}
+                >
+                  <Terminal
+                    projectId={projectId!}
+                    setPreviewPort={setPreviewPort}
+                  />
+                </div>
+              </Panel>
+            </PanelGroup>
+          </Panel>
 
-        {/* Preview */}
-        <Panel defaultSize={30} minSize={20}>
-          <ProjectPreview port={previewPort} />
-        </Panel>
-      </PanelGroup>
+          <ResizeHandle />
+
+          {/* =====================================================
+              PREVIEW
+          ===================================================== */}
+          <Panel
+            defaultSize={28}
+            minSize={24}
+            maxSize={34}
+            className="min-w-0 !border-0"
+          >
+            <div
+              className="h-full w-full overflow-hidden rounded-r-[6px]"
+              style={{
+                background: "var(--ide-bg)",
+              }}
+            >
+              <ProjectPreview port={previewPort} />
+            </div>
+          </Panel>
+        </PanelGroup>
+      </div>
     </div>
   );
 };
