@@ -1,6 +1,8 @@
 # Node modules — reinstalled clean inside the image
 node_modules/
 
+*.pem
+
 # TypeScript build output — rebuilt inside the image
 dist/
 
