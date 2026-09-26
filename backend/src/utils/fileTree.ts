@@ -9,8 +9,14 @@ export type FileTree = {
 export async function generateFileTree(
   directory: string
 ): Promise<FileTree> {
+  // Return an empty tree instead of throwing when the directory doesn't
+  // exist. This prevents a 500 in getProjectDetails when a project's
+  // stored workspacePath is stale (e.g. a Windows path opened on a
+  // Dockerized Linux backend). An empty tree is safe on all platforms:
+  // Windows direct gets here only if the workspace dir was never created,
+  // which means there are no files to show anyway.
   if (!existsSync(directory)) {
-    throw new Error(`Directory does not exist: ${directory}`);
+    return {};
   }
 
   const tree: FileTree = {};

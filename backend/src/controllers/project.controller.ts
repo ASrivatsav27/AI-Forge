@@ -74,9 +74,6 @@ export async function createProjectController(req: Request, res: Response) {
     await inngest.send(
         setupRequested.create({
             projectId,
-            // Only the user's application requirements go here.
-            // The Setup Agent ignores this field entirely.
-            // The Coding Agent uses it as the sole source of what to build.
             prompt,
             setupContext: {
                 framework,
@@ -84,9 +81,6 @@ export async function createProjectController(req: Request, res: Response) {
                 database,
                 architecture,
                 connectionString,
-                // Setup Agent reads this via its user message in setup.agent.ts.
-                // The Coding Agent never sees this field — it is not part of
-                // the `prompt` that flows into planProject / generateFileContent.
                 setupPrompt,
             },
         })
@@ -222,7 +216,7 @@ export async function deleteProjectController(req: Request<ProjectParams>, res: 
 }
 
 export async function getProjectDetails(req: Request<ProjectParams>, res: Response) {
-    const { projectId } = req.params
+    const { projectId } = req.params;
     const userId = req.user.id;
 
     const project = await prisma.project.findFirst({
@@ -238,19 +232,31 @@ export async function getProjectDetails(req: Request<ProjectParams>, res: Respon
             workspacePath: true,
             containerId: true
         },
-    })
+    });
   
     if (!project) {
         return res.status(404).json({
             message:"No project found"
-        })
+        });
     }
 
-    const fileTree = await generateFileTree(project.workspacePath);
+    // If the stored workspacePath is a Windows absolute path (contains a
+    // drive letter or backslash) but we're running on Linux (Dockerized
+    // backend), recompute the path from WORKSPACE_PATH + project ID.
+    // This handles projects that were created on Windows before
+    // Dockerization whose DB rows still hold Windows paths.
+    // On Windows direct: stored paths are already correct Windows paths,
+    // so the regex never matches and nothing changes.
+    let resolvedWorkspacePath = project.workspacePath;
+    if (/^[A-Za-z]:[\\\/]/.test(resolvedWorkspacePath) || resolvedWorkspacePath.includes("\\")) {
+        resolvedWorkspacePath = path.resolve(process.env.WORKSPACE_PATH!, project.id);
+    }
+
+    const fileTree = await generateFileTree(resolvedWorkspacePath);
   
     return res.status(200).json({
         message: "Fetched project details",
         project,
         fileTree,
-    })
+    });
 }

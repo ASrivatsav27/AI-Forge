@@ -1,0 +1,118 @@
+services:
+
+  # ── Inngest Dev Server (self-hosted) ──────────────────────────
+  #
+  # Official image confirmed: inngest/inngest
+  # Correct entrypoint confirmed: `inngest dev` (not `inngest start`)
+  # SDK URL: backend service is on the `forge` network as `backend:8000`
+  #
+  # --no-discovery disables port scanning so Inngest only syncs the
+  # one SDK URL we give it, keeping startup deterministic.
+  inngest:
+    image: inngest/inngest:latest
+    restart: unless-stopped
+
+    command: >
+      inngest dev
+      -u http://backend:8000/api/inngest
+      --no-discovery
+
+    ports:
+      - "8288:8288"
+
+    volumes:
+      - inngest_data:/data
+
+    networks:
+      - forge
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Backend ───────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    restart: unless-stopped
+
+    # Backend must start after Inngest is up so the SDK can register
+    # functions on first boot. Inngest does not need to reach the backend
+    # before it starts — it polls — so the reverse dependency is fine.
+    depends_on:
+      - inngest
+
+    # Secrets and app config come from .env — never baked into the image
+    env_file:
+      - .env
+
+    environment:
+      # Workspace path inside the backend container.
+      # Must match the left-hand side of the volume mount below.
+      WORKSPACE_PATH: /workspaces
+
+      # Inngest SDK: point to the self-hosted dev server on the
+      # internal `forge` network.
+      INNGEST_BASE_URL: http://inngest:8288
+      INNGEST_EVENT_KEY: local
+
+      # Preview probe host — portable across all environments:
+      #
+      #   Windows direct (no Docker):  DOCKER_HOST_GATEWAY not set
+      #                                → previewProbe.ts falls back to localhost ✓
+      #
+      #   Windows Docker Desktop:      host.docker.internal resolves via
+      #                                Docker Desktop's built-in DNS ✓
+      #
+      #   Linux / EC2 Docker Engine:   host.docker.internal is NOT built-in,
+      #                                but extra_hosts below maps it to the
+      #                                host gateway so it resolves correctly ✓
+      DOCKER_HOST_GATEWAY: host.docker.internal
+
+    # Portable host-gateway mapping.
+    # On Linux/Docker Engine, `host.docker.internal` is not provided
+    # automatically (unlike Docker Desktop). This tells Docker to add
+    # a /etc/hosts entry mapping `host.docker.internal` to the host's
+    # gateway IP, making the same hostname work everywhere.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      # Docker socket — required by Dockerode (container management)
+      # and node-pty (`docker exec -it <id> /bin/sh`)
+      - /var/run/docker.sock:/var/run/docker.sock
+
+      # Shared workspace volume.
+      #
+      # The HOST path (../workspaces) must be the SAME physical
+      # directory the backend passes to docker.createContainer() Binds:
+      #
+      #   HOST ../workspaces/<projectId>
+      #     → backend container /workspaces/<projectId>   (WORKSPACE_PATH)
+      #     → project container /app                      (Binds mount)
+      #
+      # All three paths point to the same inode on the host filesystem.
+      - ../workspaces:/workspaces
+
+    networks:
+      - forge
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+networks:
+  forge:
+    driver: bridge
+
+volumes:
+  inngest_data:

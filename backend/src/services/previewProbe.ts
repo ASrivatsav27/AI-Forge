@@ -17,6 +17,26 @@ export type PreviewResult =
  * (`res.resume()`), leaving callers with only a generic
  * "Preview HTTP verification timed out" message that gave the fix
  * agent nothing concrete to act on.
+ *
+ * PORTABILITY:
+ * When the backend runs inside Docker, project container ports are
+ * bound on the HOST network interface, not inside the backend
+ * container. `localhost` inside the backend container refers to the
+ * backend container itself, so probing `localhost:<hostPort>` always
+ * fails with ECONNREFUSED.
+ *
+ * DOCKER_HOST_GATEWAY is set to `host.docker.internal` in
+ * docker-compose.yml, which resolves to the host via Docker's
+ * host-gateway mechanism on both Docker Desktop (Windows/Mac) and
+ * Linux/EC2. When the backend runs directly on Windows without Docker,
+ * the variable is not set and we fall back to `localhost`, preserving
+ * the original behaviour.
+ *
+ * Environment   | DOCKER_HOST_GATEWAY | probeHost
+ * ─────────────────────────────────────────────────
+ * Windows direct| (not set)           | localhost
+ * Windows Docker| host.docker.internal| host gateway
+ * Linux/EC2 Docker| host.docker.internal| host gateway
  */
 export async function waitForPreview(
   port: string,
@@ -25,15 +45,20 @@ export async function waitForPreview(
   const start = Date.now();
   let lastReason = "Preview did not become ready in time.";
 
+  // Resolve once per waitForPreview call — the env var never changes
+  // at runtime, so there is no need to read it inside the loop.
+  const probeHost =
+    process.env.DOCKER_HOST_GATEWAY ?? "localhost";
+
   while (Date.now() - start < timeout) {
     try {
       console.log(
-        `[previewProbe] requesting http://localhost:${port}/`
+        `[previewProbe] requesting http://${probeHost}:${port}/`
       );
 
       await new Promise<void>((resolve, reject) => {
         const req = http.get(
-          `http://localhost:${port}/`,
+          `http://${probeHost}:${port}/`,
           (res) => {
             const statusCode = res.statusCode;
 
