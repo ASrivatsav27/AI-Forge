@@ -84,14 +84,14 @@ export default function LoginPage() {
   async function loginGoogle() {
     await authClient.signIn.social({
       provider: "google",
-      callbackURL: "http://localhost:3000/dashboard",
+      callbackURL: "/dashboard",
     });
   }
 
   async function loginGithub() {
     await authClient.signIn.social({
       provider: "github",
-      callbackURL: "http://localhost:3000/dashboard",
+      callbackURL: "/dashboard",
     });
   }
 
@@ -109,10 +109,7 @@ export default function LoginPage() {
         </CardHeader>
 
         <CardContent>
-          <form
-            onSubmit={handleLogin}
-            className="space-y-5"
-          >
+          <form onSubmit={handleLogin} className="space-y-5">
             <div>
               <Label>Email</Label>
 
@@ -150,6 +147,7 @@ export default function LoginPage() {
             )}
 
             <Button
+              type="submit"
               className="w-full"
               disabled={loading}
             >
@@ -159,9 +157,7 @@ export default function LoginPage() {
 
           <div className="my-5 flex items-center gap-3">
             <div className="h-px flex-1 bg-zinc-800" />
-            <span className="text-xs text-zinc-500">
-              OR
-            </span>
+            <span className="text-xs text-zinc-500">OR</span>
             <div className="h-px flex-1 bg-zinc-800" />
           </div>
 
