@@ -45,9 +45,17 @@ function GithubIcon() {
       fill="currentColor"
       aria-hidden="true"
     >
-      <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.09 3.29 9.42 7.86 10.95.57.1.78-.25.78-.55v-2.14c-3.2.7-3.88-1.36-3.88-1.36-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.71.08-.71 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.23-1.28-5.23-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.47.11-3.06 0 0 .97-.31 3.17 1.18a10.98 10.98 0 0 1 5.76 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.77.11 3.06.74.81 1.19 1.84 1.19 3.1 0 4.42-2.69 5.39-5.25 5.68.41.35.78 1.04.78 2.1v3.11c0 .3.21.66.79.55A11.52 11.52 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" />
+      <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.09 3.29 9.42 7.86 10.95.57.1.78-.25.78-.55v-2.14c0-.3.21-.65.78-.55 4.57-1.53 7.86-5.86 7.86-10.95C23.5 5.65 18.35.5 12 .5Zm0 18.16c-1.03 0-1.97-.3-2.77-.83-.17-.1-.35-.04-.35.17v1.85c0 .16-.06.25-.2.21C5.4 18.93 3 15.73 3 12 3 7.03 7.03 3 12 3s9 4.03 9 9c0 3.73-2.4 6.93-5.68 8.06-.14.04-.2-.05-.2-.21V18c0-.21-.18-.27-.35-.17-.8.53-1.74.83-2.77.83Z" />
     </svg>
   );
+}
+
+function getOAuthCallbackURL() {
+  if (window.location.hostname === "localhost") {
+    return "http://localhost:3000/dashboard";
+  }
+
+  return "https://app.adapasrivatsav.in/dashboard";
 }
 
 export default function RegisterPage() {
@@ -86,14 +94,14 @@ export default function RegisterPage() {
   async function signupGoogle() {
     await authClient.signIn.social({
       provider: "google",
-      callbackURL: "/dashboard",
+      callbackURL: getOAuthCallbackURL(),
     });
   }
 
   async function signupGithub() {
     await authClient.signIn.social({
       provider: "github",
-      callbackURL: "/dashboard",
+      callbackURL: getOAuthCallbackURL(),
     });
   }
 
@@ -169,7 +177,11 @@ export default function RegisterPage() {
 
           <div className="my-5 flex items-center gap-3">
             <div className="h-px flex-1 bg-zinc-800" />
-            <span className="text-xs text-zinc-500">OR</span>
+
+            <span className="text-xs text-zinc-500">
+              OR
+            </span>
+
             <div className="h-px flex-1 bg-zinc-800" />
           </div>
 
