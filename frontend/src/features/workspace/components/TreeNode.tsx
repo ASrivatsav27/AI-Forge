@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 
 import { useProject } from "@/hooks/useProject";
-import InlineInput from "./InLineInput";
+import InlineInput from "./InlineInput";
 import type { CreatingState } from "@/types/explorer.types";
 import type { FileTree } from "@/types/project.types";
 

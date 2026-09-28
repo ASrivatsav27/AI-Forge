@@ -13,7 +13,7 @@ import {
 import socket from "@/sockets/socket";
 import { useProject } from "@/hooks/useProject";
 import TreeNode from "./TreeNode";
-import InlineInput from "./InLineInput";
+import InlineInput from "./InlineInput";
 import type { FileTree } from "@/types/project.types";
 import type { CreatingState } from "@/types/explorer.types";
 
