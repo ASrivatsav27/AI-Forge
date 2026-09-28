@@ -12,9 +12,20 @@ const prisma = new PrismaClient({
 });
 
 export const auth = betterAuth({
-  baseURL: "http://localhost:8000",
+  baseURL: process.env.BETTER_AUTH_URL,
 
-  trustedOrigins: ["http://localhost:3000"],
+  trustedOrigins: [
+    "http://localhost:3000",
+    "https://app.adapasrivatsav.in",
+    "https://ai-forge-mu-bay.vercel.app",
+  ],
+
+  advanced: {
+    crossSubDomainCookies: {
+      enabled: true,
+      domain: ".adapasrivatsav.in",
+    },
+  },
 
   database: prismaAdapter(prisma, {
     provider: "postgresql",
@@ -29,6 +40,7 @@ export const auth = betterAuth({
       clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
     },
+
     github: {
       clientId: process.env.GITHUB_CLIENT_ID!,
       clientSecret: process.env.GITHUB_CLIENT_SECRET!,
