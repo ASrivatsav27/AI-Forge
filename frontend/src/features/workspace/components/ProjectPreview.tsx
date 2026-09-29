@@ -9,7 +9,7 @@ const ProjectPreview = ({ port }: Props) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const previewUrl = port
-    ? `https://preview.adapasrivatsav.in:${port}`
+    ? `https://${port}.preview.adapasrivatsav.in`
     : null;
 
   const refresh = () => {
@@ -60,7 +60,7 @@ const ProjectPreview = ({ port }: Props) => {
             color: "#686D75",
           }}
         >
-          preview.adapasrivatsav.in:{port}
+          {port}.preview.adapasrivatsav.in
         </span>
 
         {/* Controls */}
