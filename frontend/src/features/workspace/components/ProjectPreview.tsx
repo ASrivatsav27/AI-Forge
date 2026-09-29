@@ -9,13 +9,12 @@ const ProjectPreview = ({ port }: Props) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const previewUrl = port
-    ? `http://localhost:${port}`
+    ? `https://preview.adapasrivatsav.in:${port}`
     : null;
 
   const refresh = () => {
     if (iframeRef.current) {
-      iframeRef.current.src =
-        iframeRef.current.src;
+      iframeRef.current.src = iframeRef.current.src;
     }
   };
 
@@ -61,7 +60,7 @@ const ProjectPreview = ({ port }: Props) => {
             color: "#686D75",
           }}
         >
-          localhost:{port}
+          preview.adapasrivatsav.in:{port}
         </span>
 
         {/* Controls */}
@@ -78,16 +77,12 @@ const ProjectPreview = ({ port }: Props) => {
               textDecoration: "none",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background =
-                "#191B1F";
-              e.currentTarget.style.color =
-                "#E4E4E7";
+              e.currentTarget.style.background = "#191B1F";
+              e.currentTarget.style.color = "#E4E4E7";
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background =
-                "transparent";
-              e.currentTarget.style.color =
-                "#858A93";
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.color = "#858A93";
             }}
           >
             <ExternalLink size={12} />
@@ -102,16 +97,12 @@ const ProjectPreview = ({ port }: Props) => {
               color: "#858A93",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background =
-                "#191B1F";
-              e.currentTarget.style.color =
-                "#E4E4E7";
+              e.currentTarget.style.background = "#191B1F";
+              e.currentTarget.style.color = "#E4E4E7";
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background =
-                "transparent";
-              e.currentTarget.style.color =
-                "#858A93";
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.color = "#858A93";
             }}
           >
             <RefreshCw size={12} />
