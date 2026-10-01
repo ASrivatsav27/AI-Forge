@@ -15,3 +15,7 @@ export const claude = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
   baseURL:"https://api.justwoker.icu",
 })
+export const qwen3 = new OpenAI({
+  apiKey: process.env.UNOROUTER_API_KEY,
+  baseURL: "https://api.unorouter.com/v1",
+});

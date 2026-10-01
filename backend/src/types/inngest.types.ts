@@ -8,6 +8,13 @@ export type SetupContext = {
    *  prompt so the Coding Agent never reads scaffolding instructions.
    *  The Setup Agent reads this via its user message in setup.agent.ts. */
   setupPrompt?: string;
+  /** This project's public preview origin (e.g. "32783.preview.adapasrivatsav.in"),
+   *  computed deterministically from the container's dynamically assigned
+   *  host port right after container creation. Used by the Setup Agent to
+   *  configure allowedDevOrigins for Next.js, and by the platform-side
+   *  nextConfig.service.ts patch. Optional — the follow-up codingRequested
+   *  path sends a minimal setupContext without it. */
+  previewOrigin?: string;
 };
 
 /**

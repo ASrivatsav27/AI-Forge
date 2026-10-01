@@ -16,13 +16,22 @@ import { generateFileTree } from "./src/utils/fileTree.js";
 
 const server = createServer(app);
 
-const io = new Server<ClientToServerEvents,ServerToClientEvents>(server, {
+
+const io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"],
-    allowedHeaders: ["my-custom-header"],
+    origin: [
+      "http://localhost:3000",
+      "https://ai-forge-mu-bay.vercel.app",
+      "https://ai-forge-qijb186ac-srivatsavs-projects-7f830892.vercel.app",
+      "https://ai-forge-git-main-srivatsavs-projects-7f830892.vercel.app",
+      "https://app.adapasrivatsav.in",
+    ],
+    credentials: true,
   },
 });
+
+setIO(io);
+
 
 setIO(io);
 

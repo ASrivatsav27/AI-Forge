@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { groq } from "../services/ai.service.js";
+import { FRAMEWORK_CONTAINER_PORT } from "../config/frameworkPorts.js";
 // ─── Tool definitions ──────────────────────────────────────────────────────────
 
 const AGENT_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
@@ -161,6 +162,12 @@ Then:
 
   cd frontend && npm run dev -- --host 0.0.0.0
 
+The dev server MUST bind to port ${FRAMEWORK_CONTAINER_PORT["React"]}
+(Vite's default port). NEVER pass a --port flag to change this — the
+platform has already computed this project's public preview origin
+assuming this exact port, and changing it will silently break the
+public preview.
+
 Wait for preview verification.
 
 Do NOT send Ctrl-C merely because installation takes time.
@@ -189,11 +196,35 @@ After the command finishes:
 
   npm run dev -- --hostname 0.0.0.0
 
+The dev server MUST bind to port ${FRAMEWORK_CONTAINER_PORT["Next.js"]}
+(Next.js's default port). NEVER pass a --port flag to change this — the
+platform has already computed this project's public preview origin
+assuming this exact port, and changing it will silently break the
+public preview.
+
 Wait for preview verification.
 
 Do not use Vite flags for Next.js.
 
 Do not create a separate frontend directory for Next.js.
+
+---
+
+## PREVIEW ORIGIN (Next.js only)
+
+This project may have a public preview origin computed by the platform.
+If one is provided in the context below, it is a literal value — never
+guess, construct, or infer it yourself.
+
+The platform applies the required next.config.* change for you
+automatically and deterministically once the config file exists. You do
+NOT need to edit next.config yourself. This section exists only so you
+understand why allowedDevOrigins may already be present in the config
+if you inspect it — do not remove it, and do not treat it as something
+you forgot to do.
+
+If you ever need to inspect or touch next.config.* for an unrelated
+reason, preserve the allowedDevOrigins field exactly as you find it.
 
 ---
 
@@ -364,6 +395,7 @@ export type SetupContext = {
   architecture?: string;
   connectionString?: string;
   setupPrompt?: string;
+  previewOrigin?: string;
 };
 
 export type SetupRequest = {
@@ -498,6 +530,7 @@ Connection string: ${
             ? "Provided"
             : "Not provided"
         }
+Preview origin: ${data.setupContext.previewOrigin ?? "Not provided"}
 
 Latest observation:
 
