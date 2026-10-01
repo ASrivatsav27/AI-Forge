@@ -4,7 +4,6 @@ import { prisma } from "../config/db.js";
 import { getIO } from "../socket/io.js";
 import { createSession } from "../session/createSession.js";
 import { ensureContainerRunning } from "../services/docker.service.js";
-import { ensureNextAllowedDevOrigin } from "../services/nextConfig.service.js";
 import {
   setupAgent,
   AgentActionParseError,
@@ -26,7 +25,6 @@ type SetupContext = {
   database?: string;
   architecture?: string;
   connectionString?: string;
-  previewOrigin?: string;
 };
 
 type SetupResult = {
@@ -290,43 +288,6 @@ export const setupWorkflow = inngest.createFunction(
             "Current sessions:",
             [...sessions.keys()]
           );
-
-          // Deterministic, platform-owned Next.js config patch — applies
-          // allowedDevOrigins for this project's previewOrigin without
-          // relying on the LLM to perform the edit. Safe to call any
-          // number of times: no-op if next.config.* doesn't exist yet,
-          // or if the origin is already present.
-          async function maybePatchNextConfig(): Promise<void> {
-            if (setupContext.framework !== "Next.js" || !setupContext.previewOrigin) {
-              return;
-            }
-
-            try {
-              const patched = await ensureNextAllowedDevOrigin(
-                session.workspacePath,
-                setupContext.previewOrigin
-              );
-
-              if (patched) {
-                console.log(
-                  `Deterministically patched next.config with allowedDevOrigins for ${setupContext.previewOrigin}`
-                );
-              }
-            } catch (err) {
-              console.error(
-                "Failed to patch next.config for preview origin:",
-                err
-              );
-              // Non-fatal — never blocks the setup loop. The Setup
-              // Agent's system prompt instruction remains as a
-              // documented fallback for this edge case.
-            }
-          }
-
-          // Covers resumed/recovered sessions where scaffold already
-          // happened in a prior attempt but the config was never patched.
-          await maybePatchNextConfig();
-
           async function nextAction(
             observation?: string
           ): Promise<AgentAction> {
@@ -399,12 +360,6 @@ export const setupWorkflow = inngest.createFunction(
               );
 
               const evt = await nextEvent(session);
-
-              // Catches it right after the scaffold command finishes —
-              // before the agent is ever asked for its next action, so
-              // the config is already correct by the time "npm run dev"
-              // could possibly be chosen.
-              await maybePatchNextConfig();
 
               if (evt.kind === "previewReady") {
                 emitAgentStatus(

@@ -15,7 +15,6 @@ import { sessions } from "./session.manager.js";
 
 
 
-
 const STOP_SIGNAL_PATTERN = /\^C/;
 
 /*

@@ -2,6 +2,7 @@ import type { ProjectSession } from "../types/session.js";
 import { emitEvent } from "../services/runtime-events.js";
 
 type ActiveCommand = {
+  command: string;
   buffer: string;
   promptIndex: number;
   waitingForInput: boolean;
@@ -64,6 +65,7 @@ export function executeCommand(
   }
 
   const active: ActiveCommand = {
+    command,
     buffer: "",
     promptIndex: 0,
     waitingForInput: false,
@@ -131,6 +133,41 @@ export function executeCommand(
   console.log("Writing command");
 
   session.pty.write(command + "\n");
+}
+
+export function restartActiveCommand(
+  session: ProjectSession,
+  delayMs = 500,
+): boolean {
+  const projectId = session.projectId;
+  const active = activeCommands.get(projectId);
+
+  if (!active || active.finished) {
+    console.log("No active command available to restart.");
+    return false;
+  }
+
+  const command = active.command;
+
+  console.log("Restarting active command:", command);
+
+  // Stop the current long-running process.
+  session.pty.write("\u0003");
+
+  // Retire the old PTY listener/state without emitting
+  // commandCompleted. This restart is internal preview recovery.
+  active.finished = true;
+  cleanupActiveCommand(projectId, active);
+
+  setTimeout(() => {
+    try {
+      executeCommand(session, command);
+    } catch (error) {
+      console.error("Failed to restart active command:", error);
+    }
+  }, delayMs);
+
+  return true;
 }
 
 export function sendInput(

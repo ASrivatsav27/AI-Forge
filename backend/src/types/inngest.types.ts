@@ -14,7 +14,6 @@ export type SetupContext = {
    *  configure allowedDevOrigins for Next.js, and by the platform-side
    *  nextConfig.service.ts patch. Optional — the follow-up codingRequested
    *  path sends a minimal setupContext without it. */
-  previewOrigin?: string;
 };
 
 /**

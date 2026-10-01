@@ -1,6 +1,5 @@
 import OpenAI from "openai";
 import { groq } from "../services/ai.service.js";
-import { FRAMEWORK_CONTAINER_PORT } from "../config/frameworkPorts.js";
 // ─── Tool definitions ──────────────────────────────────────────────────────────
 
 const AGENT_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
@@ -162,12 +161,6 @@ Then:
 
   cd frontend && npm run dev -- --host 0.0.0.0
 
-The dev server MUST bind to port ${FRAMEWORK_CONTAINER_PORT["React"]}
-(Vite's default port). NEVER pass a --port flag to change this — the
-platform has already computed this project's public preview origin
-assuming this exact port, and changing it will silently break the
-public preview.
-
 Wait for preview verification.
 
 Do NOT send Ctrl-C merely because installation takes time.
@@ -195,12 +188,6 @@ Do NOT send Ctrl-C merely because preview is absent during installation.
 After the command finishes:
 
   npm run dev -- --hostname 0.0.0.0
-
-The dev server MUST bind to port ${FRAMEWORK_CONTAINER_PORT["Next.js"]}
-(Next.js's default port). NEVER pass a --port flag to change this — the
-platform has already computed this project's public preview origin
-assuming this exact port, and changing it will silently break the
-public preview.
 
 Wait for preview verification.
 
@@ -395,7 +382,6 @@ export type SetupContext = {
   architecture?: string;
   connectionString?: string;
   setupPrompt?: string;
-  previewOrigin?: string;
 };
 
 export type SetupRequest = {
@@ -530,7 +516,6 @@ Connection string: ${
             ? "Provided"
             : "Not provided"
         }
-Preview origin: ${data.setupContext.previewOrigin ?? "Not provided"}
 
 Latest observation:
 
