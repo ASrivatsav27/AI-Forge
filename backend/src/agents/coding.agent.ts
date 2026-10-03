@@ -120,10 +120,19 @@ function isTransientNetworkError(err: unknown): boolean {
 // ANTHROPIC RESPONSE HELPERS
 // ─────────────────────────────────────────────────────────────
 
+function describeResponse(response: Anthropic.Message): string {
+  const types = response.content.map((b) => b.type).join(",") || "none";
+  return `blocks=[${types}] stop_reason=${response.stop_reason} output_tokens=${response.usage?.output_tokens}`;
+}
+
+function hasUsableText(response: Anthropic.Message): boolean {
+  return response.content.some((b) => b.type === "text" && b.text.trim().length > 0);
+}
+
 function extractTextContent(response: Anthropic.Message | undefined): string {
   if (!response) throw new ModelResponseParseError("No response from model.", response);
   const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
-  if (textBlocks.length === 0) throw new ModelResponseParseError("No text content in model response.", response);
+  if (textBlocks.length === 0) throw new ModelResponseParseError(`No text content in model response (${describeResponse(response)}).`, response);
   return textBlocks.map((b) => b.text).join("");
 }
 
@@ -194,60 +203,47 @@ async function callModelWithRetry(
 }
 
 // ─────────────────────────────────────────────────────────────
-// STREAMING MODEL CALL WITH RETRIES
+// FILE GENERATION CALL + SMOOTH LIVE-STYLE REVEAL
 // ─────────────────────────────────────────────────────────────
+
+// One normal (non-streaming) call, then the finished text is revealed to
+// onDelta at a steady pace so the frontend shows the file being written.
+// ~1200 chars/sec; very long files speed up just enough to finish within REPLAY_MAX_MS.
+const REPLAY_TICK_MS = 20;
+const REPLAY_CHARS_PER_TICK = 24;
+const REPLAY_MAX_MS = 10000;
+
+async function replayAsDeltas(text: string, onDelta: (delta: string) => void): Promise<void> {
+  const chunk = Math.max(REPLAY_CHARS_PER_TICK, Math.ceil(text.length / (REPLAY_MAX_MS / REPLAY_TICK_MS)));
+  for (let i = 0; i < text.length; i += chunk) {
+    onDelta(text.slice(i, i + chunk));
+    await sleep(REPLAY_TICK_MS);
+  }
+}
+
+function joinText(response: Anthropic.Message): string {
+  return response.content
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("");
+}
 
 async function callModelStreamWithRetry(
   client: Anthropic,
   params: Anthropic.MessageCreateParamsNonStreaming,
   onDelta?: (delta: string) => void,
 ): Promise<Anthropic.Message> {
-  let lastError: unknown;
+  let response!: Anthropic.Message;
   for (let attempt = 0; attempt <= MAX_TRANSIENT_RETRIES; attempt++) {
-    try {
-      const stream = client.messages.stream(params);
-      if (onDelta) stream.on("text", (delta) => onDelta(delta));
-      return await stream.finalMessage();
-    } catch (err) {
-      lastError = err;
-      if (isTransientNetworkError(err)) {
-        if (attempt === MAX_TRANSIENT_RETRIES) break;
-        const backoff = BASE_BACKOFF_MS * (attempt + 1);
-        console.log(`Network error (stream) (${(err as Error).message}) — retrying in ${backoff}ms (${attempt + 1}/${MAX_TRANSIENT_RETRIES})`);
-        await sleep(backoff);
-        continue;
-      }
-      if (!isAPIError(err)) throw err;
-      const status = err.status;
-      const errorMessage = err.error?.message ?? err.message ?? "Unknown API error";
-      if (status === 429 && errorMessage.toLowerCase().includes("tokens per day")) {
-        const retryAfterHeader = err.headers?.get?.("retry-after");
-        throw new DailyTokenLimitError(errorMessage, retryAfterHeader ? Number(retryAfterHeader) : undefined);
-      }
-      if (status === 429) {
-        if (attempt === MAX_TRANSIENT_RETRIES) break;
-        const retryAfterHeader = err.headers?.get?.("retry-after");
-        const waitSeconds = retryAfterHeader ? Number(retryAfterHeader) : (attempt + 1) * 5;
-        console.log(`Rate limited (stream) — waiting ${waitSeconds}s before retry ${attempt + 1}/${MAX_TRANSIENT_RETRIES}`);
-        await sleep(waitSeconds * 1000);
-        continue;
-      }
-      if (status === 400 && err.error?.code === "tool_use_failed") {
-        if (attempt === MAX_TRANSIENT_RETRIES) break;
-        await sleep(BASE_BACKOFF_MS * (attempt + 1));
-        continue;
-      }
-      if (status >= 500) {
-        if (attempt === MAX_TRANSIENT_RETRIES) break;
-        const backoff = BASE_BACKOFF_MS * (attempt + 1);
-        console.log(`Upstream ${status} (stream) — retrying in ${backoff}ms (${attempt + 1}/${MAX_TRANSIENT_RETRIES})`);
-        await sleep(backoff);
-        continue;
-      }
-      throw err;
-    }
+    response = await callModelWithRetry(client, params);
+    if (hasUsableText(response)) break;
+    if (attempt === MAX_TRANSIENT_RETRIES) return response;
+    const emptyBackoff = BASE_BACKOFF_MS * (attempt + 1);
+    console.log(`Empty model response (${describeResponse(response)}) — retrying in ${emptyBackoff}ms (${attempt + 1}/${MAX_TRANSIENT_RETRIES})`);
+    await sleep(emptyBackoff);
   }
-  throw lastError;
+  if (onDelta) await replayAsDeltas(joinText(response), onDelta);
+  return response;
 }
 
 function stripCodeFences(text: string): string {

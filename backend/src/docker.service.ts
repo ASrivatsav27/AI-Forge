@@ -1,10 +1,13 @@
+import docker from "./config/docker.js";
 import path from "path";
-import docker from "../config/docker.js";
 
-export async function createContainer(projectId: string,workspacePath: string){
+export async function createContainer(
+  projectId: string,
+  workspacePath: string
+) {
   const hostWorkspacePath = path.resolve(
     process.env.HOST_WORKSPACE_PATH!,
-    projectId,
+    projectId
   );
 
   const container = await docker.createContainer({
@@ -23,6 +26,7 @@ export async function createContainer(projectId: string,workspacePath: string){
 
     HostConfig: {
       Binds: [`${hostWorkspacePath}:/app`],
+
       PortBindings: {
         "3000/tcp": [{ HostPort: "0" }],
         "3001/tcp": [{ HostPort: "0" }],
@@ -43,7 +47,6 @@ export async function deleteContainer(projectId: string) {
   await container.stop();
   await container.remove();
 }
-
 
 export async function ensureContainerRunning(containerId: string) {
   const container = docker.getContainer(containerId);

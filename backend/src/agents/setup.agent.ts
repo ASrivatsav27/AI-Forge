@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { groq } from "../services/ai.service.js";
+
 // ─── Tool definitions ──────────────────────────────────────────────────────────
 
 const AGENT_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
@@ -9,7 +10,7 @@ const AGENT_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       name: "executeCommand",
       description:
         "Execute a single shell command in the project workspace. " +
-        "Use this to scaffold, install dependencies, or start the dev server.",
+        "Use this to scaffold, install dependencies, configure frontend CORS/origin, or start the dev server.",
       parameters: {
         type: "object",
         properties: {
@@ -19,6 +20,50 @@ const AGENT_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           },
         },
         required: ["command"],
+        additionalProperties: false,
+      },
+    },
+  },
+
+  {
+    type: "function",
+    function: {
+      name: "readFile",
+      description:
+        "Read an existing frontend configuration file from the project workspace.",
+      parameters: {
+        type: "object",
+        properties: {
+          relativePath: {
+            type: "string",
+            description: "Workspace-relative path of the file to read.",
+          },
+        },
+        required: ["relativePath"],
+        additionalProperties: false,
+      },
+    },
+  },
+
+  {
+    type: "function",
+    function: {
+      name: "writeFile",
+      description:
+        "Write an existing frontend configuration file in the project workspace. Preserve all unrelated content.",
+      parameters: {
+        type: "object",
+        properties: {
+          relativePath: {
+            type: "string",
+            description: "Workspace-relative path of the file to write.",
+          },
+          content: {
+            type: "string",
+            description: "Complete updated file content.",
+          },
+        },
+        required: ["relativePath", "content"],
         additionalProperties: false,
       },
     },
@@ -99,13 +144,18 @@ observation
 → choose ONE action
 → ...
 
-Every decision must use the latest runtime observation.
+Every decision must use the latest runtime observation AND the list of
+actions you have already taken (provided in every turn).
 
 Never assume a command succeeded.
 Never assume a file exists.
 Never assume dependencies are installed.
 Never assume a server is running.
 Never assume preview is verified.
+
+Never repeat an action that already appears in your list of actions taken
+and succeeded. Do not run "ls -la" again just to re-check a file you have
+already seen or read. Move on to the next step of the sequence.
 
 ---
 
@@ -131,13 +181,98 @@ For Next.js:
 
 ## SETUP RESPONSIBILITY
 
-The setupContext tells you what stack the user selected.
+The setupContext/setupPrompt tells you what stack the user selected.
 
 Backend and database selections are INFORMATION ONLY.
 
 Do not configure them.
 
 Your job is only to prepare the selected frontend.
+
+---
+
+## CORS / PREVIEW ORIGIN CONFIGURATION
+
+Before starting the development server, configure the frontend development
+server's CORS / allowed-origin / origin setting for:
+
+  *.preview.adapasrivatsav.in
+
+The selected framework is already provided in setupContext/setupPrompt.
+
+Use that framework's appropriate configuration mechanism.
+
+Do NOT add a generic CORS system.
+Do NOT create a new configuration system.
+Do NOT modify unrelated files.
+
+Find the existing development-server configuration and make the smallest
+possible change required to allow:
+
+  *.preview.adapasrivatsav.in
+
+Preserve all existing configuration and options.
+
+THE EXACT OPTION TO SET (this is a dev-server option, NOT HTTP headers):
+
+- Next.js: add the option allowedDevOrigins to the object in next.config.ts
+  (or next.config.mjs / next.config.js), like this:
+
+    allowedDevOrigins: ["*.preview.adapasrivatsav.in"],
+
+- React/Vite: add the option allowedHosts inside the server object in
+  frontend/vite.config.ts, like this:
+
+    server: { allowedHosts: [".preview.adapasrivatsav.in"] },
+
+NEVER add a headers() function, Access-Control-* headers, rewrites,
+middleware, or any other CORS mechanism. They do not solve this problem.
+
+Keep the file short. Copy the existing content exactly, add only the single
+option above, and do not add comments or any other options.
+
+For this CORS/origin step you MUST use ONLY readFile and writeFile.
+
+NEVER use executeCommand to edit the configuration.
+
+Do NOT use cat >, heredocs, echo >, sed, awk, perl, or shell redirection
+to modify the configuration.
+
+First use readFile to read the existing configuration.
+
+Then use writeFile with the complete updated file content.
+
+Preserve all existing configuration and make only the required
+preview-origin change.
+
+If the origin is already configured, do not write the file; just verify it.
+
+SEQUENCE FOR THIS STEP (follow it using your list of actions taken):
+
+1. readFile the configuration file (only once).
+2. If the latest observation shows the file content and it does NOT already
+   contain the preview origin, your NEXT action MUST be writeFile with the
+   complete updated content. Do NOT run ls -la or readFile again first.
+3. After writeFile succeeds, do exactly one readFile of the same file to
+   verify it now contains the preview origin.
+4. Once verified, start the development server.
+
+If your list of actions taken already contains a successful readFile of the
+configuration file, you must NOT read it again before writing it.
+
+After editing, verify that the configuration actually contains the required
+preview origin.
+
+If the configuration already allows the preview origin, do not change it;
+just verify it.
+
+This CORS/origin configuration step must happen BEFORE starting the
+development server.
+
+After it is configured and verified, continue with the existing development
+server command normally.
+
+Do not make any other setup changes for this step.
 
 ---
 
@@ -156,6 +291,8 @@ Then:
   cd frontend && npm install
 
 Wait for installation to finish.
+
+Then configure and verify the CORS / preview origin as described above.
 
 Then:
 
@@ -187,6 +324,10 @@ Do NOT send Ctrl-C merely because preview is absent during installation.
 
 After the command finishes:
 
+Configure and verify the CORS / preview origin as described above.
+
+Then:
+
   npm run dev -- --hostname 0.0.0.0
 
 Wait for preview verification.
@@ -194,24 +335,6 @@ Wait for preview verification.
 Do not use Vite flags for Next.js.
 
 Do not create a separate frontend directory for Next.js.
-
----
-
-## PREVIEW ORIGIN (Next.js only)
-
-This project may have a public preview origin computed by the platform.
-If one is provided in the context below, it is a literal value — never
-guess, construct, or infer it yourself.
-
-The platform applies the required next.config.* change for you
-automatically and deterministically once the config file exists. You do
-NOT need to edit next.config yourself. This section exists only so you
-understand why allowedDevOrigins may already be present in the config
-if you inspect it — do not remove it, and do not treat it as something
-you forgot to do.
-
-If you ever need to inspect or touch next.config.* for an unrelated
-reason, preserve the allowedDevOrigins field exactly as you find it.
 
 ---
 
@@ -324,18 +447,17 @@ Never explain your reasoning.
 
 Return exactly one valid tool call.
 
-Use:
+Use exactly one of:
 
 executeCommand
-
+readFile
+writeFile
 sendInput
-
-or:
-
 finish
 
 based on the latest observation.
 
+---
 
 ## BACKEND IS NEVER YOUR JOB
 
@@ -359,6 +481,7 @@ For React + Express, your entire job is:
 
   create/prepare frontend/
   → install frontend dependencies
+  → configure and verify frontend CORS/origin
   → start frontend
   → get frontend preview verified
   → finish
@@ -386,15 +509,23 @@ export type SetupContext = {
 
 export type SetupRequest = {
   projectId: string;
+
   /** The user's application requirements — NOT read by the Setup Agent.
-   *  Kept here only so the workflow can forward it to the Coding workflow. */
+   * Kept here only so the workflow can forward it to the Coding workflow. */
   prompt: string;
+
   setupContext: SetupContext;
   observation?: string | undefined;
+
+  /** Actions already taken in this setup run (oldest first). The agent has
+   * no memory between turns, so this is what lets it know where it is. */
+  history?: string[] | undefined;
 };
 
 export type AgentAction =
   | { tool: "executeCommand"; command: string }
+  | { tool: "readFile"; relativePath: string }
+  | { tool: "writeFile"; relativePath: string; content: string }
   | { tool: "sendInput"; input: string }
   | { tool: "finish"; reason: string };
 
@@ -411,6 +542,30 @@ export class AgentActionParseError extends Error {
 }
 
 // ─── Validation ────────────────────────────────────────────────────────────────
+
+/**
+ * The model is told to send "\\r" for Enter, but it often returns the literal
+ * two characters backslash + r (or backslash + n) instead of a real Enter,
+ * which then gets typed into the prompt as text. Convert those to an empty
+ * string: sendInput() appends its own newline, which is the Enter keypress.
+ * Ctrl-C variants are left alone because sendInput() already handles them.
+ */
+function normalizeKeystroke(raw: string): string {
+  const t = raw.trim();
+
+  if (
+    t === "\\r" ||
+    t === "\\n" ||
+    t === "\\\\r" ||
+    t === "\\\\n" ||
+    t === "\r" ||
+    t === "\n"
+  ) {
+    return "";
+  }
+
+  return raw;
+}
 
 type GroqToolCall =
   OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall;
@@ -430,6 +585,42 @@ function parseToolCall(
   }
 
   switch (block.function.name) {
+    case "readFile": {
+      if (typeof input.relativePath !== "string") {
+        throw new AgentActionParseError(
+          `readFile: expected input.relativePath to be a string, got ${typeof input.relativePath}`,
+          block,
+        );
+      }
+
+      return {
+        tool: "readFile",
+        relativePath: input.relativePath,
+      };
+    }
+
+    case "writeFile": {
+      if (typeof input.relativePath !== "string") {
+        throw new AgentActionParseError(
+          `writeFile: expected input.relativePath to be a string, got ${typeof input.relativePath}`,
+          block,
+        );
+      }
+
+      if (typeof input.content !== "string") {
+        throw new AgentActionParseError(
+          `writeFile: expected input.content to be a string, got ${typeof input.content}`,
+          block,
+        );
+      }
+
+      return {
+        tool: "writeFile",
+        relativePath: input.relativePath,
+        content: input.content,
+      };
+    }
+
     case "executeCommand": {
       if (typeof input.command !== "string") {
         throw new AgentActionParseError(
@@ -454,7 +645,7 @@ function parseToolCall(
 
       return {
         tool: "sendInput",
-        input: input.input,
+        input: normalizeKeystroke(input.input),
       };
     }
 
@@ -489,7 +680,7 @@ export async function setupAgent(
   const message = await groq.chat.completions.create({
     model: "qwen/qwen3.8-27b",
 
-    max_tokens: 512,
+    max_tokens: 4096,
 
     temperature: 0,
 
@@ -517,6 +708,14 @@ Connection string: ${
             : "Not provided"
         }
 
+Actions you have already taken (oldest first):
+
+${
+  data.history && data.history.length > 0
+    ? data.history.map((h, i) => `${i + 1}. ${h}`).join("\n")
+    : "None"
+}
+
 Latest observation:
 
 ${data.observation ?? "None. This is the first action."}
@@ -529,6 +728,13 @@ Decide the next action.`,
 
     tool_choice: "required",
   });
+
+  if (message.choices[0]?.finish_reason === "length") {
+    throw new AgentActionParseError(
+      "Model output was truncated (hit max_tokens); refusing to act on a partial tool call.",
+      message,
+    );
+  }
 
   const assistantMessage =
     message.choices[0]?.message;

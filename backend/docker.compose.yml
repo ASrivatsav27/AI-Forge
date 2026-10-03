@@ -1,0 +1,71 @@
+services:
+
+  # ── Inngest Dev Server ───────────────────────────────────────
+  inngest:
+    image: inngest/inngest:latest
+    restart: unless-stopped
+
+    command: >
+      inngest dev
+      -u http://backend:8000/api/inngest
+      --no-discovery
+
+    ports:
+      - "8288:8288"
+
+    volumes:
+      - inngest_data:/data
+
+    networks:
+      - forge
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Backend ───────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    restart: unless-stopped
+
+    depends_on:
+      - inngest
+
+    env_file:
+      - .env
+
+    environment:
+      INNGEST_BASE_URL: http://inngest:8288
+      INNGEST_EVENT_KEY: local
+      DOCKER_HOST_GATEWAY: host.docker.internal
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../workspaces:/workspaces
+
+    networks:
+      - forge
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+networks:
+  forge:
+    driver: bridge
+
+volumes:
+  inngest_data:
