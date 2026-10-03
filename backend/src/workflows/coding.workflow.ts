@@ -166,6 +166,10 @@ export const codingWorkflow = inngest.createFunction(
     id: "coding-workflow",
     retries: 2,
     triggers: [{ event: "project/coding.requested" }],
+    // Inngest applies this per executing step: at most 4 file-generation steps
+    // (plus nothing else, since the rest are sequential) run at once per project,
+    // instead of one request per file in the batch (~20) hitting the provider together.
+    concurrency: { limit: 4, key: "event.data.projectId" },
     optimizeParallelism: false,
     onFailure: async ({ event, error }) => {
       const originalEvent = event.data.event as { data?: { projectId?: string } } | undefined;

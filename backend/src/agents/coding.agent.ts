@@ -83,6 +83,9 @@ export class DailyTokenLimitError extends Error {
 // ─────────────────────────────────────────────────────────────
 
 const MAX_TRANSIENT_RETRIES = 3;
+// A request that hit the client deadline is retried at most this many times
+// (each attempt can take up to CLAUDE_REQUEST_TIMEOUT_MS).
+const MAX_TIMEOUT_RETRIES = 1;
 const BASE_BACKOFF_MS = 3000;
 
 function sleep(ms: number) {
@@ -156,11 +159,24 @@ async function callModelWithRetry(
   params: Anthropic.MessageCreateParamsNonStreaming,
 ): Promise<Anthropic.Message> {
   let lastError: unknown;
+  let timeouts = 0;
   for (let attempt = 0; attempt <= MAX_TRANSIENT_RETRIES; attempt++) {
+    const startedAt = Date.now();
     try {
       return await client.messages.create(params);
     } catch (err) {
       lastError = err;
+      if (err instanceof Anthropic.APIConnectionTimeoutError) {
+        timeouts++;
+        const secs = Math.round((Date.now() - startedAt) / 1000);
+        if (timeouts > MAX_TIMEOUT_RETRIES) {
+          console.log(`Model request timed out after ${secs}s — giving up (${timeouts}/${MAX_TIMEOUT_RETRIES + 1} attempts).`);
+          break;
+        }
+        console.log(`Model request timed out after ${secs}s — retrying (${timeouts}/${MAX_TIMEOUT_RETRIES}).`);
+        await sleep(BASE_BACKOFF_MS);
+        continue;
+      }
       if (isTransientNetworkError(err)) {
         if (attempt === MAX_TRANSIENT_RETRIES) break;
         const backoff = BASE_BACKOFF_MS * (attempt + 1);
@@ -697,6 +713,7 @@ Just the file content.
 `;
 
   console.log(`===== GENERATE FILE: ${req.file.path} =====`);
+  const generateStartedAt = Date.now();
 
   const response = await callModelStreamWithRetry(
     claude,
@@ -711,7 +728,13 @@ Just the file content.
   );
 
   const content = stripCodeFences(extractTextContent(response));
-  console.log(`Generated ${content.length} chars for ${req.file.path}`);
+  console.log(
+    `Generated ${content.length} chars for ${req.file.path} in ${Math.round((Date.now() - generateStartedAt) / 1000)}s ` +
+      `(stop_reason=${response.stop_reason}, output_tokens=${response.usage?.output_tokens})`,
+  );
+  if (response.stop_reason === "max_tokens") {
+    console.log(`WARNING: ${req.file.path} hit max_tokens — output is truncated.`);
+  }
   console.log("=============================================");
   return content;
 }
