@@ -25,11 +25,12 @@
 
 > **Prompt → Setup → Generate → Run → Live Application**
 
-[**▶ Watch the AI Forge Demo**](DEMO_URL)
+[**▶ Watch the AI Forge Demo**](https://github.com/user-attachments/assets/b9721e15-02dc-47bb-aa8e-1f316a41bdfd)
 
 <!-- Replace DEMO_URL with the final video link (GitHub Release asset, or a user-attachments URL). -->
 
 The demo shows the **complete generation process**, not just the finished landing page:
+
 
 1. **Prompt** – a single natural-language description of the app.
 2. **Setup** – the Setup Agent scaffolds the framework inside a fresh, isolated container and brings up a dev server.
